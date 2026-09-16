@@ -37,6 +37,8 @@ function toRepo(row, viewerId = null) {
             username: row.owner_username
         },
         private: Boolean(row.is_private),
+        draft: Boolean(row.is_draft),
+        thumbnail: row.thumbnail,
         permissions: toPermissions(row, viewerId),
         default_branch: row.default_branch,
         fork: row.parent_recipe_id != null,
@@ -77,29 +79,27 @@ function toCommit(row) {
     };
 }
 
-async function getViewableRepo(repoId, viewerId) {
+async function getRepoWithPermission(repoId, viewerId, permission, action) {
     const row = await getRepoByRepoId(repoId);
     if (!row) {
         const err = new Error('リポジトリが見つかりません');
         err.status = 404;
         throw err;
     }
-    if (!toPermissions(row, viewerId).pull) {
-        const err = new Error('このリポジトリを閲覧する権限がありません');
+    if (!toPermissions(row, viewerId)[permission]) {
+        const err = new Error(`このリポジトリを${action}する権限がありません`);
         err.status = 403;
         throw err;
     }
     return row;
 }
 
-async function getAdministrableRepo(repoId, userId, action) {
-    const row = await getViewableRepo(repoId, userId);
-    if (!toPermissions(row, userId).admin) {
-        const err = new Error(`このリポジトリを${action}する権限がありません`);
-        err.status = 403;
-        throw err;
-    }
-    return row;
+function getViewableRepo(repoId, viewerId) {
+    return getRepoWithPermission(repoId, viewerId, 'pull', '閲覧');
+}
+
+function getAdministrableRepo(repoId, userId, action) {
+    return getRepoWithPermission(repoId, userId, 'admin', action);
 }
 
 // 同じ人が同じ名前のレシピを2つ持てない（uq_repos_owner_name）ので、重複は 409 で返す
@@ -137,7 +137,7 @@ async function saveRepo(userId, payload, message) {
 
 async function createRepository(ownerId, payload) {
     const title = requireTitle(payload);
-    const message = payload.commitMessage || payload.commit_message || `レシピ作成: ${title}`;
+    const message = payload.commit_message || `レシピ作成: ${title}`;
 
     return saveRepo(ownerId, payload, message);
 }
@@ -148,18 +148,18 @@ async function createRepository(ownerId, payload) {
 async function forkRepository(userId, repoId, payload = {}) {
     const source = await getViewableRepo(repoId, userId);
 
-    const forkType = Number(payload.forkType ?? payload.fork_type ?? FORK_TYPE_ARRANGE);
+    const forkType = Number(payload.fork_type ?? FORK_TYPE_ARRANGE);
     if (forkType !== FORK_TYPE_ARRANGE && forkType !== FORK_TYPE_PORT) {
-        const err = new Error('forkType は 1（アレンジ）か 2（移植）のどちらかです');
+        const err = new Error('fork_type は 1（アレンジ）か 2（移植）のどちらかです');
         err.status = 400;
         throw err;
     }
 
     // 元レシピの上に payload を重ねる。渡された項目だけが上書きされ、残りは引き継がれる
-    const merged = { ...source, ...payload, forkType, parentRecipeId: source.repo_id };
+    const merged = { ...source, ...payload, fork_type: forkType, parent_recipe_id: source.repo_id };
     const title = requireTitle(merged);
     const kind = forkType === FORK_TYPE_PORT ? '移植' : 'アレンジ';
-    const message = payload.commitMessage || payload.commit_message
+    const message = payload.commit_message
         || `レシピを${kind}: ${source.owner_username}/${source.name} → ${title}`;
 
     return saveRepo(userId, merged, message);
@@ -207,7 +207,7 @@ async function updateRepository(userId, repoId, payload) {
     await getAdministrableRepo(repoId, userId, '編集');
 
     const title = requireTitle(payload);
-    const message = payload.commitMessage || payload.commit_message || `レシピ更新: ${title}`;
+    const message = payload.commit_message || `レシピ更新: ${title}`;
     const { commit } = await editRepoByRepoId(repoId, userId, payload, message);
 
     const updated = await getRepoByRepoId(repoId);

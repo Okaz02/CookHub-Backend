@@ -7,8 +7,10 @@ const REPO_SELECT = `
            r.title AS name,
            r.description,
            r.default_branch,
+           r.thumbnail,
            r.stars_count,
            r.is_private,
+           r.is_draft,
            r.parent_recipe_id,
            r.fork_type,
            r.created_at,
@@ -20,7 +22,7 @@ const REPO_SELECT = `
 
 // あるレシピに触れたコミットの一覧。子テーブルだけの変更（材料の増減など）も
 // 履歴に出したいので、4つの差分テーブルを横断してコミットハッシュを集める
-const REPO_COMMITS = `
+const COMMIT_LIST_SELECT = `
     SELECT l.commit_hash, l.message, l.committer, l.email, l.date
     FROM dolt_log l
     WHERE l.commit_hash IN (
@@ -98,11 +100,11 @@ function normalizeRepoInput(repo = {}) {
     return {
         title: normalizeJsonValue(repo.title, repo.name),
         description: normalizeJsonValue(repo.description, null),
-        defaultBranch: normalizeJsonValue(repo.defaultBranch, repo.default_branch, 'main'),
-        parentRecipeId: normalizeJsonValue(repo.parentRecipeId, repo.parent_recipe_id, null),
-        isPrivate: normalizeJsonValue(repo.isPrivate, repo.is_private, repo.private, false),
-        isDraft: normalizeJsonValue(repo.isDraft, repo.is_draft, false),
-        forkType: normalizeJsonValue(repo.forkType, repo.fork_type, 0),
+        defaultBranch: normalizeJsonValue(repo.default_branch, 'main'),
+        parentRecipeId: normalizeJsonValue(repo.parent_recipe_id, null),
+        isPrivate: normalizeJsonValue(repo.is_private, false),
+        isDraft: normalizeJsonValue(repo.is_draft, false),
+        forkType: normalizeJsonValue(repo.fork_type, 0),
         thumbnail: normalizeJsonValue(repo.thumbnail, null)
     };
 }
@@ -114,7 +116,7 @@ function normalizeEnvironment(environment) {
 
     return environment.map((entry = {}) => ({
         id: entry.id != null ? Number(entry.id) : null,
-        keyName: entry.keyName ?? entry.key_name ?? entry.name,
+        keyName: entry.key_name,
         value: entry.value
     }));
 }
@@ -140,7 +142,7 @@ function normalizeSteps(steps) {
     return steps.map((step = {}) => ({
         id: step.id != null ? Number(step.id) : null,
         body: step.body,
-        imageUrl: step.imageUrl ?? step.image_url ?? null
+        imageUrl: step.image_url ?? null
     }));
 }
 
@@ -296,7 +298,7 @@ async function listReposByOwnerId(ownerId) {
 
 async function listCommitsByRepoId(repoId, limit = 100) {
     const recipeId = Number(repoId);
-    const [rows] = await pool.query(REPO_COMMITS, [
+    const [rows] = await pool.query(COMMIT_LIST_SELECT, [
         recipeId, recipeId,
         recipeId, recipeId,
         recipeId, recipeId,
@@ -313,14 +315,14 @@ async function getCommitByRepoId(repoId, commitHash) {
     }
 
     const params = [commitHash, Number(repoId), Number(repoId)];
-    const [[repo], [environment], [ingredients], [steps]] = await Promise.all([
+    const [[info], [environment], [ingredients], [steps]] = await Promise.all([
         pool.query(COMMIT_DIFF_REPO, params),
         pool.query(COMMIT_DIFF_ENVIRONMENT, params),
         pool.query(COMMIT_DIFF_INGREDIENTS, params),
         pool.query(COMMIT_DIFF_STEPS, params)
     ]);
 
-    return { ...logs[0], changes: { repo, environment, ingredients, steps } };
+    return { ...logs[0], changes: { info, environment, ingredients, steps } };
 }
 
 async function getRepoByRepoId(repoId) {

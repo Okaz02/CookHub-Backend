@@ -1,5 +1,7 @@
 const express = require('express');
-const { getAccountBySession } = require('../services/accountService');
+const asyncHandler = require('../middleware/asyncHandler');
+const { requireAuth, optionalAuth } = require('../middleware/auth');
+const validateNumericParams = require('../middleware/validateNumericParams');
 const {
     searchReposByStars,
     createRepository,
@@ -14,112 +16,60 @@ const {
 
 const router = express.Router();
 
-router.post('/create', async (req, res, next) => {
-    try {
-        const [, token] = (req.headers.authorization || '').split(' ');
-        const account = await getAccountBySession(token);
-        const result = await createRepository(account.user_id, req.body);
-        res.status(201).json(result);
-    } catch (error) {
-        next(error);
-    }
-});
+router.post('/', requireAuth, asyncHandler(async (req, res) => {
+    const result = await createRepository(req.account?.user_id, req.body);
+    res.status(201).json(result);
+}));
 
-router.get('/mine', async (req, res, next) => {
-    try {
-        const [, token] = (req.headers.authorization || '').split(' ');
-        const account = await getAccountBySession(token);
-        const result = await searchReposByCurrentUser(account.user_id);
-        res.status(200).json(result);
-    } catch (error) {
-        next(error);
-    }
-});
+router.get('/mine', requireAuth, asyncHandler(async (req, res) => {
+    const result = await searchReposByCurrentUser(req.account?.user_id);
+    res.status(200).json(result);
+}));
 
-router.get('/trend', async (req, res, next) => {
-    try {
-        const [, token] = (req.headers.authorization || '').split(' ');
-        const account = token ? await getAccountBySession(token) : null;
-        const result = await searchReposByStars(account && account.user_id);
-        res.status(200).json(result);
-    } catch (error) {
-        next(error);
-    }
-});
+router.get('/trend', optionalAuth, asyncHandler(async (req, res) => {
+    const result = await searchReposByStars(req.account?.user_id);
+    res.status(200).json(result);
+}));
 
 // トークンは任意。非公開リポジトリは管理者（オーナー）のトークンがないと 403 になる。
-router.get('/:id', async (req, res, next) => {
-    try {
-        const { id } = req.params;
-        const [, token] = (req.headers.authorization || '').split(' ');
-        const account = token ? await getAccountBySession(token) : null;
-        const result = await getRepoDetail(id, account && account.user_id);
-        res.status(200).json(result);
-    } catch (error) {
-        next(error);
-    }
-});
+router.get('/:id', validateNumericParams('id'), optionalAuth, asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const result = await getRepoDetail(id, req.account?.user_id);
+    res.status(200).json(result);
+}));
 
-router.get('/:id/commits', async (req, res, next) => {
-    try {
-        const { id } = req.params;
-        const [, token] = (req.headers.authorization || '').split(' ');
-        const account = token ? await getAccountBySession(token) : null;
-        const result = await getRepoCommits(id, account && account.user_id);
-        res.status(200).json(result);
-    } catch (error) {
-        next(error);
-    }
-});
+router.get('/:id/commits', validateNumericParams('id'), optionalAuth, asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const result = await getRepoCommits(id, req.account?.user_id);
+    res.status(200).json(result);
+}));
 
-router.get('/:id/commit/:commitId', async (req, res, next) => {
-    try {
-        const { id, commitId } = req.params;
-        const [, token] = (req.headers.authorization || '').split(' ');
-        const account = token ? await getAccountBySession(token) : null;
-        const result = await getRepoCommit(id, commitId, account && account.user_id);
-        res.status(200).json(result);
-    } catch (error) {
-        next(error);
-    }
-});
+// commitId は Dolt のコミットハッシュ（数値ではない）なので数値バリデーションの対象外。
+// 存在しないハッシュは getRepoCommit 側が 404 を返す。
+router.get('/:id/commits/:commitId', validateNumericParams('id'), optionalAuth, asyncHandler(async (req, res) => {
+    const { id, commitId } = req.params;
+    const result = await getRepoCommit(id, commitId, req.account?.user_id);
+    res.status(200).json(result);
+}));
 
 // 既存レシピを自分のレシピとして複製する。body は任意で、
-// forkType（1 = アレンジ / 2 = 移植）や title などを渡すとその項目だけ変えて複製できる。
-router.post('/:id/fork', async (req, res, next) => {
-    try {
-        const { id } = req.params;
-        const [, token] = (req.headers.authorization || '').split(' ');
-        const account = await getAccountBySession(token);
-        const result = await forkRepository(account.user_id, id, req.body);
-        res.status(201).json(result);
-    } catch (error) {
-        next(error);
-    }
-});
+// fork_type（1 = アレンジ / 2 = 移植）や title などを渡すとその項目だけ変えて複製できる。
+router.post('/:id/fork', validateNumericParams('id'), requireAuth, asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const result = await forkRepository(req.account?.user_id, id, req.body);
+    res.status(201).json(result);
+}));
 
-router.patch('/:id/update', async (req, res, next) => {
-    try {
-        const { id } = req.params;
-        const [, token] = (req.headers.authorization || '').split(' ');
-        const account = await getAccountBySession(token);
-        const result = await updateRepository(account.user_id, id, req.body);
-        res.status(200).json(result);
-    } catch (error) {
-        next(error);
-    }
-});
+router.patch('/:id', validateNumericParams('id'), requireAuth, asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const result = await updateRepository(req.account?.user_id, id, req.body);
+    res.status(200).json(result);
+}));
 
-router.delete('/:id/delete', async (req, res, next) => {
-    try {
-        const { id } = req.params;
-        const [, token] = (req.headers.authorization || '').split(' ');
-        const account = await getAccountBySession(token);
-        const result = await deleteRepository(account.user_id, id);
-        res.status(200).json(result);
-    } catch (error) {
-        next(error);
-    }
-});
+router.delete('/:id', validateNumericParams('id'), requireAuth, asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const result = await deleteRepository(req.account?.user_id, id);
+    res.status(200).json(result);
+}));
 
 module.exports = router;
