@@ -1,10 +1,11 @@
 const { commitDolt } = require('../clients/doltClient');
 const { pool } = require('./pool');
 
-// リポジトリ取得の共通部分。呼び出し側で WHERE / ORDER BY / LIMIT を足して使う
-const REPO_SELECT = `
-    SELECT r.recipe_id AS repo_id,
-           r.title AS name,
+// レシピ取得の共通部分。呼び出し側で WHERE / ORDER BY / LIMIT を足して使う。
+// カラム名はDBのまま返し、repo語彙への翻訳はservice層のtoRepo()に任せる
+const RECIPE_SELECT = `
+    SELECT r.recipe_id,
+           r.title,
            r.description,
            r.default_branch,
            r.thumbnail,
@@ -15,8 +16,8 @@ const REPO_SELECT = `
            r.fork_type,
            r.created_at,
            r.updated_at,
-           a.user_id  AS owner_user_id,
-           a.username AS owner_username
+           a.user_id,
+           a.username
     FROM repos_information r
     JOIN accounts a ON a.user_id = r.owner_id`;
 
@@ -96,16 +97,16 @@ function normalizeJsonValue(...values) {
     return JSON.stringify(value);
 }
 
-function normalizeRepoInput(repo = {}) {
+function normalizeRecipeInput(recipe = {}) {
     return {
-        title: normalizeJsonValue(repo.title, repo.name),
-        description: normalizeJsonValue(repo.description, null),
-        defaultBranch: normalizeJsonValue(repo.default_branch, 'main'),
-        parentRecipeId: normalizeJsonValue(repo.parent_recipe_id, null),
-        isPrivate: normalizeJsonValue(repo.is_private, false),
-        isDraft: normalizeJsonValue(repo.is_draft, false),
-        forkType: normalizeJsonValue(repo.fork_type, 0),
-        thumbnail: normalizeJsonValue(repo.thumbnail, null)
+        title: normalizeJsonValue(recipe.title, recipe.name),
+        description: normalizeJsonValue(recipe.description, null),
+        defaultBranch: normalizeJsonValue(recipe.default_branch, 'main'),
+        parentRecipeId: normalizeJsonValue(recipe.parent_recipe_id, null),
+        isPrivate: normalizeJsonValue(recipe.is_private, false),
+        isDraft: normalizeJsonValue(recipe.is_draft, false),
+        forkType: normalizeJsonValue(recipe.fork_type, 0),
+        thumbnail: normalizeJsonValue(recipe.thumbnail, null)
     };
 }
 
@@ -201,9 +202,9 @@ async function syncChildRows(connection, recipeId, tableKey, rows) {
     }
 }
 
-async function createRepo(ownerId, repo, commitMessage) {
+async function createRecipe(ownerId, recipe, commitMessage) {
     const { title, description, defaultBranch, parentRecipeId, isPrivate, isDraft, forkType, thumbnail } =
-        normalizeRepoInput(repo);
+        normalizeRecipeInput(recipe);
 
     const connection = await pool.getConnection();
     try {
@@ -237,7 +238,7 @@ async function createRepo(ownerId, repo, commitMessage) {
 
         const recipeId = result.insertId;
 
-        const environment = normalizeEnvironment(repo.environment);
+        const environment = normalizeEnvironment(recipe.environment);
         if (environment.length > 0) {
             await connection.query(
                 'INSERT INTO recipe_environment (recipe_id, sort_order, key_name, value) VALUES ?',
@@ -245,7 +246,7 @@ async function createRepo(ownerId, repo, commitMessage) {
             );
         }
 
-        const ingredients = normalizeIngredients(repo.ingredients);
+        const ingredients = normalizeIngredients(recipe.ingredients);
         if (ingredients.length > 0) {
             await connection.query(
                 'INSERT INTO recipe_ingredients (recipe_id, sort_order, name, amount, unit) VALUES ?',
@@ -253,7 +254,7 @@ async function createRepo(ownerId, repo, commitMessage) {
             );
         }
 
-        const steps = normalizeSteps(repo.steps);
+        const steps = normalizeSteps(recipe.steps);
         if (steps.length > 0) {
             await connection.query(
                 'INSERT INTO recipe_steps (recipe_id, sort_order, body, image_url) VALUES ?',
@@ -263,10 +264,10 @@ async function createRepo(ownerId, repo, commitMessage) {
 
         await connection.commit();
 
-        const [rows] = await pool.query(`${REPO_SELECT} WHERE r.recipe_id = ?`, [recipeId]);
+        const [rows] = await pool.query(`${RECIPE_SELECT} WHERE r.recipe_id = ?`, [recipeId]);
         const commit = await commitDolt(commitMessage, ownerId);
 
-        return { commit: commit, repo: rows[0] || null };
+        return { commit, recipe: rows[0] || null };
     } catch (error) {
         await connection.rollback();
         throw error;
@@ -275,9 +276,9 @@ async function createRepo(ownerId, repo, commitMessage) {
     }
 }
 
-async function listRecentRepos(limit = 100) {
+async function listRecentRecipes(limit = 100) {
     const [rows] = await pool.query(
-        `${REPO_SELECT}
+        `${RECIPE_SELECT}
          WHERE r.is_private = FALSE
          ORDER BY r.created_at DESC
          LIMIT ?`,
@@ -286,9 +287,9 @@ async function listRecentRepos(limit = 100) {
     return rows;
 }
 
-async function listReposByOwnerId(ownerId) {
+async function listRecipesByOwnerId(ownerId) {
     const [rows] = await pool.query(
-        `${REPO_SELECT}
+        `${RECIPE_SELECT}
          WHERE r.owner_id = ?
          ORDER BY r.created_at DESC`,
         [Number(ownerId)]
@@ -296,25 +297,26 @@ async function listReposByOwnerId(ownerId) {
     return rows;
 }
 
-async function listCommitsByRepoId(repoId, limit = 100) {
-    const recipeId = Number(repoId);
+async function listCommitsByRecipeId(recipeId, limit = 100) {
+    const id = Number(recipeId);
     const [rows] = await pool.query(COMMIT_LIST_SELECT, [
-        recipeId, recipeId,
-        recipeId, recipeId,
-        recipeId, recipeId,
-        recipeId, recipeId,
+        id, id,
+        id, id,
+        id, id,
+        id, id,
         Number(limit)
     ]);
     return rows;
 }
 
-async function getCommitByRepoId(repoId, commitHash) {
+async function getCommitByRecipeId(recipeId, commitHash) {
     const [logs] = await pool.query(COMMIT_SELECT, [commitHash]);
     if (!logs[0]) {
         return null;
     }
 
-    const params = [commitHash, Number(repoId), Number(repoId)];
+    const id = Number(recipeId);
+    const params = [commitHash, id, id];
     const [[info], [environment], [ingredients], [steps]] = await Promise.all([
         pool.query(COMMIT_DIFF_REPO, params),
         pool.query(COMMIT_DIFF_ENVIRONMENT, params),
@@ -325,8 +327,9 @@ async function getCommitByRepoId(repoId, commitHash) {
     return { ...logs[0], changes: { info, environment, ingredients, steps } };
 }
 
-async function getRepoByRepoId(repoId) {
-    const [rows] = await pool.query(`${REPO_SELECT} WHERE r.recipe_id = ?`, [Number(repoId)]);
+async function getRecipeById(recipeId) {
+    const id = Number(recipeId);
+    const [rows] = await pool.query(`${RECIPE_SELECT} WHERE r.recipe_id = ?`, [id]);
 
     const row = rows[0];
     if (!row) {
@@ -336,32 +339,32 @@ async function getRepoByRepoId(repoId) {
     const [[environment], [ingredients], [steps], commits] = await Promise.all([
         pool.query(
             'SELECT id, key_name, value FROM recipe_environment WHERE recipe_id = ? ORDER BY sort_order',
-            [Number(repoId)]
+            [id]
         ),
         pool.query(
             'SELECT id, name, amount, unit FROM recipe_ingredients WHERE recipe_id = ? ORDER BY sort_order',
-            [Number(repoId)]
+            [id]
         ),
         pool.query(
             'SELECT id, body, image_url FROM recipe_steps WHERE recipe_id = ? ORDER BY sort_order',
-            [Number(repoId)]
+            [id]
         ),
-        listCommitsByRepoId(repoId, 1)
+        listCommitsByRecipeId(id, 1)
     ]);
 
     return { ...row, environment, ingredients, steps, latest_commit: commits[0] || null };
 }
 
-async function deleteRepoByRepoId(repoId, userId, commitMessage) {
-    const recipeId = Number(repoId);
+async function deleteRecipeById(recipeId, userId, commitMessage) {
+    const id = Number(recipeId);
     const connection = await pool.getConnection();
     try {
         await connection.beginTransaction();
 
-        await connection.execute('DELETE FROM recipe_environment WHERE recipe_id = ?', [recipeId]);
-        await connection.execute('DELETE FROM recipe_ingredients WHERE recipe_id = ?', [recipeId]);
-        await connection.execute('DELETE FROM recipe_steps WHERE recipe_id = ?', [recipeId]);
-        await connection.execute('DELETE FROM repos_information WHERE recipe_id = ?', [recipeId]);
+        await connection.execute('DELETE FROM recipe_environment WHERE recipe_id = ?', [id]);
+        await connection.execute('DELETE FROM recipe_ingredients WHERE recipe_id = ?', [id]);
+        await connection.execute('DELETE FROM recipe_steps WHERE recipe_id = ?', [id]);
+        await connection.execute('DELETE FROM repos_information WHERE recipe_id = ?', [id]);
 
         await connection.commit();
     } catch (error) {
@@ -372,12 +375,12 @@ async function deleteRepoByRepoId(repoId, userId, commitMessage) {
     }
 
     const commit = await commitDolt(commitMessage, userId);
-    return { commit: commit };
+    return { commit };
 }
 
-async function editRepoByRepoId(repoId, userId, repo, commitMessage) {
-    const normalizedRepo = normalizeRepoInput(repo);
-    const recipeId = Number(repoId);
+async function updateRecipeById(recipeId, userId, recipe, commitMessage) {
+    const normalizedRecipe = normalizeRecipeInput(recipe);
+    const id = Number(recipeId);
 
     const connection = await pool.getConnection();
     try {
@@ -393,26 +396,26 @@ async function editRepoByRepoId(repoId, userId, repo, commitMessage) {
                  thumbnail = ?
              WHERE recipe_id = ?`,
             [
-                normalizedRepo.title,
-                normalizedRepo.description,
-                normalizedRepo.defaultBranch,
-                Number(normalizedRepo.isPrivate),
-                Number(normalizedRepo.isDraft),
-                normalizedRepo.thumbnail,
-                recipeId
+                normalizedRecipe.title,
+                normalizedRecipe.description,
+                normalizedRecipe.defaultBranch,
+                Number(normalizedRecipe.isPrivate),
+                Number(normalizedRecipe.isDraft),
+                normalizedRecipe.thumbnail,
+                id
             ]
         );
 
-        if (Array.isArray(repo.environment)) {
-            await syncChildRows(connection, recipeId, 'environment', normalizeEnvironment(repo.environment));
+        if (Array.isArray(recipe.environment)) {
+            await syncChildRows(connection, id, 'environment', normalizeEnvironment(recipe.environment));
         }
 
-        if (Array.isArray(repo.ingredients)) {
-            await syncChildRows(connection, recipeId, 'ingredients', normalizeIngredients(repo.ingredients));
+        if (Array.isArray(recipe.ingredients)) {
+            await syncChildRows(connection, id, 'ingredients', normalizeIngredients(recipe.ingredients));
         }
 
-        if (Array.isArray(repo.steps)) {
-            await syncChildRows(connection, recipeId, 'steps', normalizeSteps(repo.steps));
+        if (Array.isArray(recipe.steps)) {
+            await syncChildRows(connection, id, 'steps', normalizeSteps(recipe.steps));
         }
 
         await connection.commit();
@@ -424,16 +427,16 @@ async function editRepoByRepoId(repoId, userId, repo, commitMessage) {
     }
 
     const commit = await commitDolt(commitMessage, userId);
-    return { commit: commit, repo: normalizedRepo };
+    return { commit };
 }
 
 module.exports = {
-    createRepo,
-    listCommitsByRepoId,
-    getCommitByRepoId,
-    listRecentRepos,
-    listReposByOwnerId,
-    getRepoByRepoId,
-    editRepoByRepoId,
-    deleteRepoByRepoId
+    createRecipe,
+    listCommitsByRecipeId,
+    getCommitByRecipeId,
+    listRecentRecipes,
+    listRecipesByOwnerId,
+    getRecipeById,
+    updateRecipeById,
+    deleteRecipeById
 };
