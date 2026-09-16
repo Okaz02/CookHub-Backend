@@ -2,7 +2,6 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const {
     createAccount,
-    getCookhubAccountByUsername,
     getAccountCredentialsByUsername,
     insertAccessToken,
     getAccountByTokenHash,
@@ -50,9 +49,11 @@ async function registerAccount(username, email, password) {
         throw error;
     }
 
+    // コミットはトークンを発行したあと。先にコミットすると、発行したトークンの行が
+    // どのコミットにも属さないまま残り、次に誰かが作ったレシピのコミットに紛れ込む。
+    const token = await issueAccessToken(account);
     await commitDolt(`アカウント作成: ${account.username}`, account.user_id);
 
-    const token = await issueAccessToken(account);
     return { ...account, token };
 }
 
@@ -103,6 +104,5 @@ async function getAccountBySession(token) {
 module.exports = {
     registerAccount,
     loginAccount,
-    getAccountBySession,
-    getCookhubAccountByUsername
+    getAccountBySession
 };

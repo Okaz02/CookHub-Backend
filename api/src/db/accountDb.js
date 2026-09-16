@@ -19,14 +19,6 @@ async function getAccountById(userId) {
     return rows[0] || null;
 }
 
-async function getCookhubAccountByUsername(username) {
-    const [rows] = await pool.execute(
-        `SELECT ${ACCOUNT_COLUMNS} FROM accounts WHERE username = ?`,
-        [username]
-    );
-    return rows[0] || null;
-}
-
 async function getAccountCredentialsByUsername(username) {
     const [rows] = await pool.execute(
         `SELECT ${ACCOUNT_COLUMNS}, password_hash FROM accounts WHERE username = ?`,
@@ -62,8 +54,6 @@ async function touchAccessToken(tokenHash) {
 
 module.exports = {
     createAccount,
-    getAccountById,
-    getCookhubAccountByUsername,
     getAccountCredentialsByUsername,
     insertAccessToken,
     getAccountByTokenHash,

@@ -100,7 +100,7 @@ function normalizeRepoInput(repo = {}) {
         description: normalizeJsonValue(repo.description, null),
         defaultBranch: normalizeJsonValue(repo.defaultBranch, repo.default_branch, 'main'),
         parentRecipeId: normalizeJsonValue(repo.parentRecipeId, repo.parent_recipe_id, null),
-        isPrivate: normalizeJsonValue(repo.isPrivate, repo.is_private, false),
+        isPrivate: normalizeJsonValue(repo.isPrivate, repo.is_private, repo.private, false),
         isDraft: normalizeJsonValue(repo.isDraft, repo.is_draft, false),
         forkType: normalizeJsonValue(repo.forkType, repo.fork_type, 0),
         thumbnail: normalizeJsonValue(repo.thumbnail, null)

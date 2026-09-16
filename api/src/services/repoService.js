@@ -112,7 +112,9 @@ function toDuplicateNameError(error) {
     return error;
 }
 
-function normalizeRepoInput(payload = {}) {
+// 既定値の補完は repoDb 側に任せ、ここでは必須項目の検証だけをする。
+// 戻り値はコミットメッセージに使う
+function requireTitle(payload) {
     const title = payload.title ?? payload.name;
 
     if (!title) {
@@ -121,31 +123,15 @@ function normalizeRepoInput(payload = {}) {
         throw err;
     }
 
-    return {
-        title,
-        description: payload.description ?? null,
-        defaultBranch: payload.defaultBranch || payload.default_branch || 'main',
-        default_branch: payload.defaultBranch || payload.default_branch || 'main',
-        isPrivate: payload.isPrivate ?? payload.is_private ?? payload.private ?? false,
-        is_private: payload.isPrivate ?? payload.is_private ?? payload.private ?? false,
-        isDraft: payload.isDraft ?? payload.is_draft ?? false,
-        is_draft: payload.isDraft ?? payload.is_draft ?? false,
-        forkType: payload.forkType ?? payload.fork_type ?? 0,
-        fork_type: payload.forkType ?? payload.fork_type ?? 0,
-        thumbnail: payload.thumbnail ?? null,
-        environment: payload.environment ?? null,
-        ingredients: payload.ingredients ?? null,
-        steps: payload.steps ?? null,
-        assets: payload.assets ?? null
-    };
+    return title;
 }
 
 async function createRepository(ownerId, payload) {
-    const normalized = normalizeRepoInput(payload);
-    const message = payload.commitMessage || payload.commit_message || `レシピ作成: ${normalized.title}`;
+    const title = requireTitle(payload);
+    const message = payload.commitMessage || payload.commit_message || `レシピ作成: ${title}`;
 
     try {
-        const { commit, repo } = await createRepo(ownerId, normalized, message);
+        const { commit, repo } = await createRepo(ownerId, payload, message);
         return { ok: true, commit, data: toRepo(repo, ownerId) };
     } catch (error) {
         throw toDuplicateNameError(error);
@@ -165,17 +151,15 @@ async function forkRepository(userId, repoId, payload = {}) {
         throw err;
     }
 
-    const normalized = normalizeRepoInput({ ...source, ...payload });
+    // 元レシピの上に payload を重ねる。渡された項目だけが上書きされ、残りは引き継がれる
+    const merged = { ...source, ...payload, forkType, parentRecipeId: source.repo_id };
+    const title = requireTitle(merged);
     const kind = forkType === FORK_TYPE_PORT ? '移植' : 'アレンジ';
     const message = payload.commitMessage || payload.commit_message
-        || `レシピを${kind}: ${source.owner_username}/${source.name} → ${normalized.title}`;
+        || `レシピを${kind}: ${source.owner_username}/${source.name} → ${title}`;
 
     try {
-        const { commit, repo } = await createRepo(
-            userId,
-            { ...normalized, forkType, parentRecipeId: source.repo_id },
-            message
-        );
+        const { commit, repo } = await createRepo(userId, merged, message);
         return { ok: true, commit, data: toRepo(repo, userId) };
     } catch (error) {
         throw toDuplicateNameError(error);
@@ -223,9 +207,9 @@ async function getRepoCommit(repoId, commitId, viewerId = null) {
 async function updateRepository(userId, repoId, payload) {
     await getAdministrableRepo(repoId, userId, '編集');
 
-    const normalized = normalizeRepoInput(payload);
-    const message = payload.commitMessage || payload.commit_message || `レシピ更新: ${normalized.title}`;
-    const { commit } = await editRepoByRepoId(repoId, userId, normalized, message);
+    const title = requireTitle(payload);
+    const message = payload.commitMessage || payload.commit_message || `レシピ更新: ${title}`;
+    const { commit } = await editRepoByRepoId(repoId, userId, payload, message);
 
     const updated = await getRepoByRepoId(repoId);
     return { ok: true, commit, data: toRepo(updated, userId) };

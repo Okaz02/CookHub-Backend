@@ -23,12 +23,10 @@ async function commitDolt(message, userId) {
     }
 
     try {
-        await pool.query('CALL DOLT_ADD(?)', ['recipe_environment']);
-        await pool.query('CALL DOLT_ADD(?)', ['recipe_ingredients']);
-        await pool.query('CALL DOLT_ADD(?)', ['recipe_steps']);
-        await pool.query('CALL DOLT_ADD(?)', ['repos_information']);
-
-        const [rows] = await pool.query('CALL DOLT_COMMIT(?, ?, ?, ?, ?)', [
+        // -A はその時点の未コミットの変更をすべて含める。テーブルを個別に DOLT_ADD しても
+        // 範囲は絞れず（accounts なども一緒にコミットされる）、絞れているように見えるだけだった。
+        const [rows] = await pool.query('CALL DOLT_COMMIT(?, ?, ?, ?, ?, ?)', [
+            '-A',
             '--skip-empty',
             '--author',
             author,
