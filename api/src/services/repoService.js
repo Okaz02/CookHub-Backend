@@ -126,16 +126,20 @@ function requireTitle(payload) {
     return title;
 }
 
+async function saveRepo(userId, payload, message) {
+    try {
+        const { commit, repo } = await createRepo(userId, payload, message);
+        return { ok: true, commit, data: toRepo(repo, userId) };
+    } catch (error) {
+        throw toDuplicateNameError(error);
+    }
+}
+
 async function createRepository(ownerId, payload) {
     const title = requireTitle(payload);
     const message = payload.commitMessage || payload.commit_message || `レシピ作成: ${title}`;
 
-    try {
-        const { commit, repo } = await createRepo(ownerId, payload, message);
-        return { ok: true, commit, data: toRepo(repo, ownerId) };
-    } catch (error) {
-        throw toDuplicateNameError(error);
-    }
+    return saveRepo(ownerId, payload, message);
 }
 
 // 既存レシピを自分のレシピとして複製する（GitHub のフォーク相当の「アレンジする」）。
@@ -158,12 +162,7 @@ async function forkRepository(userId, repoId, payload = {}) {
     const message = payload.commitMessage || payload.commit_message
         || `レシピを${kind}: ${source.owner_username}/${source.name} → ${title}`;
 
-    try {
-        const { commit, repo } = await createRepo(userId, merged, message);
-        return { ok: true, commit, data: toRepo(repo, userId) };
-    } catch (error) {
-        throw toDuplicateNameError(error);
-    }
+    return saveRepo(userId, merged, message);
 }
 
 async function searchReposByStars(viewerId = null) {
