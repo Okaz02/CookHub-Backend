@@ -1,0 +1,6 @@
+.env
+api/.env
+api/node_modules/
+api/nohup.out
+cookhub-postgres/
+dolt/

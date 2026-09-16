@@ -1,0 +1,108 @@
+const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
+const {
+    createAccount,
+    getCookhubAccountByUsername,
+    getAccountCredentialsByUsername,
+    insertAccessToken,
+    getAccountByTokenHash,
+    touchAccessToken
+} = require('../db/accountDb');
+const { commitDolt } = require('../clients/doltClient');
+
+const BCRYPT_ROUNDS = 10;
+
+// アクセストークンは 40文字の16進文字列。平文は発行時のレスポンスにしか現れず、
+// DB には SHA-256 ハッシュだけを保存するので、後から値を確認することはできない。
+function generateAccessToken() {
+    return crypto.randomBytes(20).toString('hex');
+}
+
+function hashAccessToken(token) {
+    return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+async function issueAccessToken(account) {
+    const token = generateAccessToken();
+    await insertAccessToken(account.user_id, `cookhub-${Date.now()}`, hashAccessToken(token));
+    return token;
+}
+
+async function registerAccount(username, email, password) {
+    if (!username || !email || !password) {
+        const err = new Error('username, email, password はすべて必須です');
+        err.status = 400;
+        throw err;
+    }
+
+    const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+
+    let account;
+    try {
+        account = await createAccount(username, email, passwordHash);
+    } catch (error) {
+        if (error.code === 'ER_DUP_ENTRY' || error.errno === 1062) {
+            const err = new Error('username または email は既に使われています');
+            err.status = 409;
+            throw err;
+        }
+        error.status = error.status || 500;
+        throw error;
+    }
+
+    await commitDolt(`アカウント作成: ${account.username}`, account.user_id);
+
+    const token = await issueAccessToken(account);
+    return { ...account, token };
+}
+
+async function loginAccount(username, password) {
+    if (!username || !password) {
+        const err = new Error('username, password は必須です');
+        err.status = 400;
+        throw err;
+    }
+
+    const credentials = await getAccountCredentialsByUsername(username);
+    const passwordMatched = credentials
+        ? await bcrypt.compare(password, credentials.password_hash)
+        : false;
+
+    if (!credentials || !passwordMatched || !credentials.is_active) {
+        const err = new Error('ユーザー名またはパスワードが正しくありません');
+        err.status = 401;
+        throw err;
+    }
+
+    const { password_hash, ...account } = credentials;
+    const token = await issueAccessToken(account);
+
+    return { ...account, token };
+}
+
+async function getAccountBySession(token) {
+    if (!token) {
+        const err = new Error('token は必須です');
+        err.status = 400;
+        throw err;
+    }
+
+    const tokenHash = hashAccessToken(token);
+    const account = await getAccountByTokenHash(tokenHash);
+
+    if (!account || !account.is_active) {
+        const err = new Error('トークンが無効です');
+        err.status = 401;
+        throw err;
+    }
+
+    await touchAccessToken(tokenHash);
+    return account;
+}
+
+module.exports = {
+    registerAccount,
+    loginAccount,
+    getAccountBySession,
+    getCookhubAccountByUsername
+};

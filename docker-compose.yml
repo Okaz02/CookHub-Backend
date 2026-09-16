@@ -1,0 +1,30 @@
+services:
+
+  dolt:
+    image: dolthub/dolt-sql-server:latest
+    container_name: dolt
+    restart: always
+    environment:
+      DOLT_ROOT_PASSWORD: ${DOLT_ROOT_PASSWORD}
+      DOLT_DATABASE: cookhub
+      DOLT_USER: cookhub
+      DOLT_PASSWORD: ${COOKHUB_DB_PASSWORD}
+      # APIはホスト側から接続するので、どのホストからの接続も許可する
+      DOLT_USER_HOST: '%'
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./dolt/data:/var/lib/dolt
+      # 初回起動時に一度だけ実行されるスキーマ定義
+      - ./api/src/db/sql:/docker-entrypoint-initdb.d:ro
+
+  adminer:
+    image: adminer:latest
+    container_name: adminer
+    restart: always
+    depends_on:
+      - dolt
+    environment:
+      ADMINER_DEFAULT_SERVER: dolt
+    ports:
+      - "8084:8080"
