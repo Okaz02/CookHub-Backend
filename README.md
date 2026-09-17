@@ -187,27 +187,10 @@ Authorization: Bearer <token>
 
 ### GET /api/accounts/session
 
-**リクエスト**（ボディ不要）
-
-```http
-GET /api/accounts/session
-Authorization: Bearer <token>
-```
-
-**レスポンス**
-
 - `200`: アカウント情報
 - `401`: トークンが未指定または無効
 
 ### POST /api/repos
-
-**リクエスト**
-
-```http
-POST /api/repos
-Authorization: Bearer <token>
-Content-Type: application/json
-```
 
 必須は `title`（または `name`）だけで、他はすべて任意。
 
@@ -225,8 +208,6 @@ Content-Type: application/json
 }
 ```
 
-**レスポンス**
-
 - `201`: `{ "ok": true, "commit": "<コミットハッシュ>", "data": {...} }`
 - `400`: `title`（または `name`）が無い
 - `401`: トークンが未指定または無効
@@ -234,27 +215,9 @@ Content-Type: application/json
 
 ### GET /api/repos/mine
 
-**リクエスト**（ボディ不要）
-
-```http
-GET /api/repos/mine
-Authorization: Bearer <token>
-```
-
-**レスポンス**
-
 - `200`: `{ "ok": true, "data": [...] }` — 自分のレシピを作成日時の新しい順に返す（非公開も含む）
 
 ### GET /api/repos/trend
-
-**リクエスト**（ボディ不要。`Authorization` も任意で、付ければ自分のレシピに
-`permissions.admin: true` が付く）
-
-```http
-GET /api/repos/trend
-```
-
-**レスポンス**
 
 - `200`: `{ "ok": true, "data": [...] }` — 公開レシピを作成日時の新しい順に最大100件取得し、
   `stars_count` の降順に並べ替えたもの
@@ -285,15 +248,6 @@ GET /api/repos/trend
 
 ### GET /api/repos/:id
 
-**リクエスト**（ボディ不要。非公開レシピを見るときだけ `Authorization` が要る）
-
-```http
-GET /api/repos/1
-Authorization: Bearer <token>
-```
-
-**レスポンス**
-
 - `200`: レシピ詳細。一覧の形に加えて `environment` / `ingredients` / `steps` と、
   直近のコミット `latest_commit` が入る
 - `400`: `:id` が数値でない
@@ -302,26 +256,12 @@ Authorization: Bearer <token>
 
 ### GET /api/repos/:id/commits
 
-**リクエスト**（ボディ不要。`GET /api/repos/:id` と同じ）
-
-```http
-GET /api/repos/1/commits
-```
-
-**レスポンス**
-
 - `200`: そのレシピに触れたコミットを新しい順に最大100件。材料や手順だけの変更も含む
 - `400` / `403` / `404`: 上と同じ
 
 ### GET /api/repos/:id/commits/:commitId
 
-**リクエスト**（ボディ不要。`:commitId` は `GET /api/repos/:id/commits` の `sha`）
-
-```http
-GET /api/repos/1/commits/n0j8hj2iqq28n19q9nniul6n9u6li6v4
-```
-
-**レスポンス**
+`:commitId` は `GET /api/repos/:id/commits` の `sha`。
 
 - `200`: コミット1件の詳細。`changes` にそのコミットで変わった内容が
   `info` / `environment` / `ingredients` / `steps` ごとに入り、各行は `diff_type`
@@ -331,18 +271,8 @@ GET /api/repos/1/commits/n0j8hj2iqq28n19q9nniul6n9u6li6v4
 
 ### POST /api/repos/:id/fork
 
-`:id` は**複製したい元レシピ**のID。
-
-**リクエスト**
-
-```http
-POST /api/repos/1/fork
-Authorization: Bearer <token>
-Content-Type: application/json
-```
-
-ボディはすべて任意（`{}` でも省略でも可）。材料・手順・必須環境は元レシピをそのまま
-引き継ぎ、渡した項目だけが上書きされる。
+`:id` は**複製したい元レシピ**のID。ボディはすべて任意（省略可）。材料・手順・必須環境は
+元レシピをそのまま引き継ぎ、渡した項目だけが上書きされる。
 
 ```json
 {
@@ -353,10 +283,7 @@ Content-Type: application/json
 ```
 
 `fork_type` は `1` = アレンジ（デフォルト）、`2` = 移植（別の環境・人数に作り直したもの）。
-元レシピは `parent_recipe_id` に残るので、あとから派生をたどれる。自分の持ちレシピと
-名前がぶつかると `409` になるので、その場合は `title` を指定する。
-
-**レスポンス**
+元レシピは `parent_recipe_id` に残るので、あとから派生をたどれる。
 
 - `201`: 複製されたレシピ。`fork: true` と派生元の `parent_id` が入る
 - `400`: `fork_type` が 1 / 2 以外
@@ -367,19 +294,9 @@ Content-Type: application/json
 
 ### PATCH /api/repos/:id
 
-**リクエスト**
-
-```http
-PATCH /api/repos/1
-Authorization: Bearer <token>
-Content-Type: application/json
-```
-
 ボディは `POST /api/repos` と同じ形で、`title`（または `name`）は毎回必須。
 `environment` / `ingredients` / `steps` は**配列を渡したときだけ**丸ごと差し替えられる
 （省略すれば現状維持、`[]` を渡せば全削除）。
-
-**レスポンス**
 
 - `200`: 更新後のレシピ
 - `400`: `title`（または `name`）が無い / `:id` が数値でない
@@ -388,16 +305,7 @@ Content-Type: application/json
 
 ### DELETE /api/repos/:id
 
-**リクエスト**（ボディ不要）
-
-```http
-DELETE /api/repos/1
-Authorization: Bearer <token>
-```
-
 材料・手順・必須環境・そのレシピが関わるプルリクエストも一緒に削除される。
-
-**レスポンス**
 
 - `200`: `{ "ok": true, "commit": "...", "data": { "id": 1 } }`
 - `403`: 自分のレシピではない
@@ -538,28 +446,3 @@ Authorization: Bearer <取り込み先レシピのオーナーのtoken>
 - `403`: 取り込み先のオーナーではない（提案者自身がマージしようとした場合を含む）
 - `404`: プルリクエストが無い
 - `409`: 既にマージ済み
-
-## 未実装
-
-「カラムやレスポンス項目は既にあるのに中身が伴っていない」ものが多いので、
-見かけ上動いていそうな箇所に注意すること。
-
-### 値が入らない / 効いていない
-
-| 項目 | 現状 | 足りないもの |
-| --- | --- | --- |
-| スター（いいね） | `stars_count` カラムとAPIレスポンスの項目はあるが、増減させる経路がどこにも無いため**常に `0`**。`GET /api/repos/trend` の「スター数の降順」も全件同値なので実質ただの新着順 | 誰がどのレシピに付けたかを持つテーブル（二重スター防止のため一意制約が要る）、付ける/外すエンドポイント、`stars_count` の更新 |
-| 下書き（`is_draft`） | 保存・取得はできるが、**一覧の絞り込みに一切使われていない**。公開設定のまま下書きにしたレシピは `GET /api/repos/trend` に出てしまう | `listRecentRecipes` での除外、または「自分のものだけ下書きも見える」扱いの実装 |
-| `default_branch` | `'main'` という文字列が入るだけで、実際の Dolt ブランチは作られない（ブランチを作る処理自体が無い） | フォーク時のブランチ作成と、ブランチを指定した読み書き。ただし Dolt のブランチ/マージは1レシピ単位ではなくDB全体が対象になるため、素直に導入すると無関係なレシピの変更まで巻き込む |
-
-### エンドポイントが無い
-
-| 項目 | 現状 | 足りないもの |
-| --- | --- | --- |
-| プルリクエストの一覧・詳細 | 作成とマージはできるが**取得する手段が無い**ため、作成時のレスポンスを控えておかないとPRのIDが分からなくなる | `GET /api/repos/:id/pull-requests`（対象レシピ宛の一覧）と1件取得 |
-| プルリクエストのクローズ / 却下 | `status` は `0`（オープン）と `1`（マージ済み）しか使っていない | 却下用のコード、取り込み先オーナーが閉じるエンドポイント。提案者が自分で取り下げられるかは要検討 |
-| 家系図 | `parent_recipe_id` に親が記録されているのでデータは揃っている | 祖先／子孫をたどって返すエンドポイント。循環は起きない前提だが深さの上限は決めた方がよい |
-| 検索・ページネーション | `searchRepos*` という名前だが検索条件を受け取る口は無く、`trend` は100件で頭打ち、`mine` は `LIMIT` すら無い | キーワード・タグでの絞り込み、`limit` / `offset`（または cursor） |
-| 画像アップロード | `thumbnail` と `steps[].image_url` は `VARCHAR(255)` の**URL置き場**でしかなく、クライアントがどこかに上げたURLを渡す前提 | 保存先（S3等）とアップロードエンドポイント |
-| タグ | カラムもテーブルも無い | タグのテーブルと、レシピとの中間テーブル |
-| 通知 | 何も無い | フォーク・PR作成・マージを受け取る側に伝える仕組み |
