@@ -439,6 +439,10 @@ async function updateRecipeById(recipeId, userId, recipe, commitMessage) {
     return { commit };
 }
 
+// recipe_pull_requests.status のコード。0（デフォルト）が open で、それ以外は未定義だったので
+// マージ済みを表す値を決める
+const PR_STATUS_MERGED = 1;
+
 // source（フォークした自分のレシピ）の変更を target（フォーク元のレシピ）に
 // 取り込んでほしいという提案を1件作る
 async function createPullRequest(sourceRecipeId, targetRecipeId, userId, pullRequest, commitMessage) {
@@ -499,8 +503,8 @@ async function mergePullRequest(prId, userId, commitMessage) {
     // マージで生まれたコミットのハッシュはコミット後にしか分からないため、
     // レシピ本体の書き換えとは別に記録し、そのための変更も改めてコミットする
     await pool.execute(
-        'UPDATE recipe_pull_requests SET merged_commit_hash = ?, merged_at = NOW() WHERE id = ?',
-        [commit, pullRequest.id]
+        'UPDATE recipe_pull_requests SET status = ?, merged_commit_hash = ?, merged_at = NOW() WHERE id = ?',
+        [PR_STATUS_MERGED, commit, pullRequest.id]
     );
     await commitDolt(`プルリクエストをマージ済みとして記録: #${pullRequest.id}`, userId);
 
