@@ -58,7 +58,7 @@ router.post('/:id/fork', validateNumericParams('id'), requireAuth, asyncHandler(
 
 router.post('/:id/pull-request', validateNumericParams('id'), requireAuth, asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const result = await createPullRequest(req.account?.user_id, id, req.body);
+    const result = await createCheckedPullRequest(req.account?.user_id, id, req.body);
     res.status(201).json(result);
 }));
 
