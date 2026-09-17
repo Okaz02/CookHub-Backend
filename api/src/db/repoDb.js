@@ -457,15 +457,16 @@ async function createPullRequest(sourceRecipeId, targetRecipeId, userId, pullReq
 }
 
 // PR を1件マージする。source の中身（説明・必須環境・材料・手順）を target に書き写す。
-// マージ済みかどうかは merged_commit_hash の有無で判定する。タイトルや公開設定など
-// target 自体の属性は変えない
+// マージ済みかどうかは merged_at の有無で判定する（target が source と既に同じ内容の場合、
+// commitDolt は --skip-empty により null を返すことがあるため merged_commit_hash では判定できない）。
+// タイトルや公開設定など target 自体の属性は変えない
 async function mergePullRequest(prId, userId, commitMessage) {
     const [prRows] = await pool.query('SELECT * FROM recipe_pull_requests WHERE id = ?', [Number(prId)]);
     const pullRequest = prRows[0];
     if (!pullRequest) {
         return null;
     }
-    if (pullRequest.merged_commit_hash) {
+    if (pullRequest.merged_at) {
         const err = new Error('このプルリクエストは既にマージ済みです');
         err.status = 409;
         throw err;
@@ -503,7 +504,8 @@ async function mergePullRequest(prId, userId, commitMessage) {
     );
     await commitDolt(`プルリクエストをマージ済みとして記録: #${pullRequest.id}`, userId);
 
-    return { commit };
+    const [mergedRows] = await pool.query('SELECT * FROM recipe_pull_requests WHERE id = ?', [pullRequest.id]);
+    return { commit, pullRequest: mergedRows[0] || null };
 }
 
 module.exports = {
