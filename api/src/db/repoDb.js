@@ -365,7 +365,7 @@ async function deleteRecipeById(recipeId, userId, commitMessage) {
         await connection.execute('DELETE FROM recipe_ingredients WHERE recipe_id = ?', [id]);
         await connection.execute('DELETE FROM recipe_steps WHERE recipe_id = ?', [id]);
         await connection.execute(
-            'DELETE FROM recipe_pull_request WHERE target_recipe_id = ? OR source_recipe_id = ?',
+            'DELETE FROM recipe_pull_requests WHERE target_recipe_id = ? OR source_recipe_id = ?',
             [id, id]
         );
         await connection.execute('DELETE FROM repos_information WHERE recipe_id = ?', [id]);
@@ -441,29 +441,31 @@ async function updateRecipeById(recipeId, userId, recipe, commitMessage) {
 
 // source（フォークした自分のレシピ）の変更を target（フォーク元のレシピ）に
 // 取り込んでほしいという提案を1件作る
-async function createPullRequest(sourceRecipeId, targetRecipeId, userId, pullRequest) {
+async function createPullRequest(sourceRecipeId, targetRecipeId, userId, pullRequest, commitMessage) {
     const { title, content } = pullRequest;
 
     const [result] = await pool.execute(
-        `INSERT INTO recipe_pull_request (source_recipe_id, target_recipe_id, user_id, title, content)
+        `INSERT INTO recipe_pull_requests (source_recipe_id, target_recipe_id, user_id, title, content)
          VALUES (?, ?, ?, ?, ?)`,
-        [Number(sourceRecipeId), Number(targetRecipeId), userId, title, content ?? null]
+        [Number(sourceRecipeId), Number(targetRecipeId), Number(userId), title, content ?? null]
     );
 
-    const [rows] = await pool.query('SELECT * FROM recipe_pull_request WHERE id = ?', [result.insertId]);
+    const [rows] = await pool.query('SELECT * FROM recipe_pull_requests WHERE id = ?', [result.insertId]);
+    const commit = await commitDolt(commitMessage, userId);
 
     return { commit, pullRequest: rows[0] || null };
 }
 
-// PR を1件マージする。source の中身（説明・必須環境・材料・手順）を target に書き写し、
-// PR を merged にする。タイトルや公開設定など target 自体の属性は変えない
+// PR を1件マージする。source の中身（説明・必須環境・材料・手順）を target に書き写す。
+// マージ済みかどうかは merged_commit_hash の有無で判定する。タイトルや公開設定など
+// target 自体の属性は変えない
 async function mergePullRequest(prId, userId, commitMessage) {
-    const [prRows] = await pool.query('SELECT * FROM recipe_pull_request WHERE id = ?', [Number(prId)]);
+    const [prRows] = await pool.query('SELECT * FROM recipe_pull_requests WHERE id = ?', [Number(prId)]);
     const pullRequest = prRows[0];
     if (!pullRequest) {
         return null;
     }
-    if (pullRequest.status === 'merged') {
+    if (pullRequest.merged_commit_hash) {
         const err = new Error('このプルリクエストは既にマージ済みです');
         err.status = 409;
         throw err;
@@ -483,10 +485,6 @@ async function mergePullRequest(prId, userId, commitMessage) {
     try {
         await connection.beginTransaction();
         await applyRecipeUpdate(connection, pullRequest.target_recipe_id, mergedContent);
-        await connection.execute(
-            "UPDATE recipe_pull_request SET status = 'merged', merged_at = NOW() WHERE id = ?",
-            [pullRequest.id]
-        );
         await connection.commit();
     } catch (error) {
         await connection.rollback();
@@ -496,6 +494,15 @@ async function mergePullRequest(prId, userId, commitMessage) {
     }
 
     const commit = await commitDolt(commitMessage, userId);
+
+    // マージで生まれたコミットのハッシュはコミット後にしか分からないため、
+    // レシピ本体の書き換えとは別に記録し、そのための変更も改めてコミットする
+    await pool.execute(
+        'UPDATE recipe_pull_requests SET merged_commit_hash = ?, merged_at = NOW() WHERE id = ?',
+        [commit, pullRequest.id]
+    );
+    await commitDolt(`プルリクエストをマージ済みとして記録: #${pullRequest.id}`, userId);
+
     return { commit };
 }
 

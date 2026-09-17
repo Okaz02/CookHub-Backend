@@ -217,10 +217,32 @@ async function deleteCheckedRepository(userId, repoId) {
     return { ok: true, commit, data: { id: existing.recipe_id } };
 }
 
-async function createCheckedPullRequest(userId, repoId, payload, viewerId = null) {
-    await requireViewableRepo(repoId, viewerId);
-    const { commit } = await recipeDb.createPullRequest(repoId, userId);
-    return { ok: true, commit, data: { id: existing.recipe_id } };
+// フォークした自分のレシピ(repoId)から、フォーク元へのプルリクエストを作る。
+// 自分のフォークであること(admin)と、フォーク元が今も閲覧できること(pull)を確認する
+async function createCheckedPullRequest(userId, repoId, payload = {}) {
+    const source = await requireAdministrableRepo(repoId, userId, '提案');
+
+    if (!source.parent_recipe_id) {
+        const err = new Error('フォーク元が無いレシピはプルリクエストを作成できません');
+        err.status = 400;
+        throw err;
+    }
+
+    await requireViewableRepo(source.parent_recipe_id, userId);
+
+    const { title, content } = payload;
+    if (!title) {
+        const err = new Error('title は必須です');
+        err.status = 400;
+        throw err;
+    }
+
+    const message = payload.commit_message || `プルリクエスト作成: ${title}`;
+    const { commit, pullRequest } = await recipeDb.createPullRequest(
+        repoId, source.parent_recipe_id, userId, { title, content }, message
+    );
+
+    return { ok: true, commit, data: pullRequest };
 }
 
 module.exports = {
@@ -232,5 +254,6 @@ module.exports = {
     getCheckedRepoCommits,
     getCheckedRepoCommit,
     updateCheckedRepository,
-    deleteCheckedRepository
+    deleteCheckedRepository,
+    createCheckedPullRequest
 };
