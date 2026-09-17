@@ -217,9 +217,9 @@ async function deleteCheckedRepository(userId, repoId) {
     return { ok: true, commit, data: { id: existing.recipe_id } };
 }
 
-async function createCheckedPullRequest(userId, repoId) {
+async function createCheckedPullRequest(userId, repoId, payload, viewerId = null) {
     await requireViewableRepo(repoId, viewerId);
-    const { commit } = await recipeDb.createPullRequest(repoId, userId, `レシピ削除: ${existing.title}`);
+    const { commit } = await recipeDb.createPullRequest(repoId, userId);
     return { ok: true, commit, data: { id: existing.recipe_id } };
 }
 

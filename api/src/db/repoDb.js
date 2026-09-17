@@ -441,17 +441,16 @@ async function updateRecipeById(recipeId, userId, recipe, commitMessage) {
 
 // source（フォークした自分のレシピ）の変更を target（フォーク元のレシピ）に
 // 取り込んでほしいという提案を1件作る
-async function createPullRequest(sourceRecipeId, targetRecipeId, userId, pullRequest, commitMessage) {
+async function createPullRequest(sourceRecipeId, targetRecipeId, userId, pullRequest) {
     const { title, content } = pullRequest;
 
     const [result] = await pool.execute(
-        `INSERT INTO recipe_pull_request (source_recipe_id, target_recipe_id, title, content)
-         VALUES (?, ?, ?, ?)`,
-        [Number(sourceRecipeId), Number(targetRecipeId), title, content ?? null]
+        `INSERT INTO recipe_pull_request (source_recipe_id, target_recipe_id, user_id, title, content)
+         VALUES (?, ?, ?, ?, ?)`,
+        [Number(sourceRecipeId), Number(targetRecipeId), userId, title, content ?? null]
     );
 
     const [rows] = await pool.query('SELECT * FROM recipe_pull_request WHERE id = ?', [result.insertId]);
-    const commit = await commitDolt(commitMessage, userId);
 
     return { commit, pullRequest: rows[0] || null };
 }
