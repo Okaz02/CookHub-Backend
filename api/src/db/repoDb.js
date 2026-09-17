@@ -364,7 +364,10 @@ async function deleteRecipeById(recipeId, userId, commitMessage) {
         await connection.execute('DELETE FROM recipe_environment WHERE recipe_id = ?', [id]);
         await connection.execute('DELETE FROM recipe_ingredients WHERE recipe_id = ?', [id]);
         await connection.execute('DELETE FROM recipe_steps WHERE recipe_id = ?', [id]);
-        await connection.execute('DELETE FROM recipe_pull_request WHERE recipe_id = ?', [id]);
+        await connection.execute(
+            'DELETE FROM recipe_pull_request WHERE target_recipe_id = ? OR source_recipe_id = ?',
+            [id, id]
+        );
         await connection.execute('DELETE FROM repos_information WHERE recipe_id = ?', [id]);
 
         await connection.commit();
@@ -379,46 +382,51 @@ async function deleteRecipeById(recipeId, userId, commitMessage) {
     return { commit };
 }
 
-async function updateRecipeById(recipeId, userId, recipe, commitMessage) {
+// repos_information の本体列と子テーブル(environment/ingredients/steps)を、
+// 開いている connection の中でまとめて書き換える。updateRecipeById と
+// mergePullRequest の両方から使う（同じ書き換えを2箇所に書かないため）
+async function applyRecipeUpdate(connection, recipeId, recipe) {
     const normalizedRecipe = normalizeRecipeInput(recipe);
     const id = Number(recipeId);
 
+    await connection.execute(
+        `UPDATE repos_information
+         SET title = ?,
+             description = ?,
+             default_branch = ?,
+             is_private = ?,
+             is_draft = ?,
+             thumbnail = ?
+         WHERE recipe_id = ?`,
+        [
+            normalizedRecipe.title,
+            normalizedRecipe.description,
+            normalizedRecipe.defaultBranch,
+            Number(normalizedRecipe.isPrivate),
+            Number(normalizedRecipe.isDraft),
+            normalizedRecipe.thumbnail,
+            id
+        ]
+    );
+
+    if (Array.isArray(recipe.environment)) {
+        await syncChildRows(connection, id, 'environment', normalizeEnvironment(recipe.environment));
+    }
+
+    if (Array.isArray(recipe.ingredients)) {
+        await syncChildRows(connection, id, 'ingredients', normalizeIngredients(recipe.ingredients));
+    }
+
+    if (Array.isArray(recipe.steps)) {
+        await syncChildRows(connection, id, 'steps', normalizeSteps(recipe.steps));
+    }
+}
+
+async function updateRecipeById(recipeId, userId, recipe, commitMessage) {
     const connection = await pool.getConnection();
     try {
         await connection.beginTransaction();
-
-        await connection.execute(
-            `UPDATE repos_information
-             SET title = ?,
-                 description = ?,
-                 default_branch = ?,
-                 is_private = ?,
-                 is_draft = ?,
-                 thumbnail = ?
-             WHERE recipe_id = ?`,
-            [
-                normalizedRecipe.title,
-                normalizedRecipe.description,
-                normalizedRecipe.defaultBranch,
-                Number(normalizedRecipe.isPrivate),
-                Number(normalizedRecipe.isDraft),
-                normalizedRecipe.thumbnail,
-                id
-            ]
-        );
-
-        if (Array.isArray(recipe.environment)) {
-            await syncChildRows(connection, id, 'environment', normalizeEnvironment(recipe.environment));
-        }
-
-        if (Array.isArray(recipe.ingredients)) {
-            await syncChildRows(connection, id, 'ingredients', normalizeIngredients(recipe.ingredients));
-        }
-
-        if (Array.isArray(recipe.steps)) {
-            await syncChildRows(connection, id, 'steps', normalizeSteps(recipe.steps));
-        }
-
+        await applyRecipeUpdate(connection, recipeId, recipe);
         await connection.commit();
     } catch (error) {
         await connection.rollback();
@@ -431,22 +439,65 @@ async function updateRecipeById(recipeId, userId, recipe, commitMessage) {
     return { commit };
 }
 
-// recipe_pull_request.created_at / updated_at はDEFAULT値を持たない（NOT NULLだが自動補完されない）
-// ため、NOW() を明示的に渡す必要がある
-async function createPullRequest(recipeId, userId, pullRequest, commitMessage) {
+// source（フォークした自分のレシピ）の変更を target（フォーク元のレシピ）に
+// 取り込んでほしいという提案を1件作る
+async function createPullRequest(sourceRecipeId, targetRecipeId, userId, pullRequest, commitMessage) {
     const { title, content } = pullRequest;
-    const id = Number(recipeId);
 
     const [result] = await pool.execute(
-        `INSERT INTO recipe_pull_request (recipe_id, title, content, created_at, updated_at)
-         VALUES (?, ?, ?, NOW(), NOW())`,
-        [id, title, content ?? null]
+        `INSERT INTO recipe_pull_request (source_recipe_id, target_recipe_id, title, content)
+         VALUES (?, ?, ?, ?)`,
+        [Number(sourceRecipeId), Number(targetRecipeId), title, content ?? null]
     );
 
     const [rows] = await pool.query('SELECT * FROM recipe_pull_request WHERE id = ?', [result.insertId]);
     const commit = await commitDolt(commitMessage, userId);
 
     return { commit, pullRequest: rows[0] || null };
+}
+
+// PR を1件マージする。source の中身（説明・必須環境・材料・手順）を target に書き写し、
+// PR を merged にする。タイトルや公開設定など target 自体の属性は変えない
+async function mergePullRequest(prId, userId, commitMessage) {
+    const [prRows] = await pool.query('SELECT * FROM recipe_pull_request WHERE id = ?', [Number(prId)]);
+    const pullRequest = prRows[0];
+    if (!pullRequest) {
+        return null;
+    }
+    if (pullRequest.status === 'merged') {
+        const err = new Error('このプルリクエストは既にマージ済みです');
+        err.status = 409;
+        throw err;
+    }
+
+    const source = await getRecipeById(pullRequest.source_recipe_id);
+    const target = await getRecipeById(pullRequest.target_recipe_id);
+    const mergedContent = {
+        ...target,
+        description: source.description,
+        environment: source.environment,
+        ingredients: source.ingredients,
+        steps: source.steps
+    };
+
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+        await applyRecipeUpdate(connection, pullRequest.target_recipe_id, mergedContent);
+        await connection.execute(
+            "UPDATE recipe_pull_request SET status = 'merged', merged_at = NOW() WHERE id = ?",
+            [pullRequest.id]
+        );
+        await connection.commit();
+    } catch (error) {
+        await connection.rollback();
+        throw error;
+    } finally {
+        connection.release();
+    }
+
+    const commit = await commitDolt(commitMessage, userId);
+    return { commit };
 }
 
 module.exports = {
@@ -458,5 +509,6 @@ module.exports = {
     getRecipeById,
     updateRecipeById,
     deleteRecipeById,
-    createPullRequest
+    createPullRequest,
+    mergePullRequest
 };
