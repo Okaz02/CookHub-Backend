@@ -176,18 +176,18 @@ async function searchReposByCurrentUser(userId) {
     return { ok: true, data };
 }
 
-async function getRepoDetail(repoId, viewerId = null) {
+async function getCheckedRepoDetail(repoId, viewerId = null) {
     const row = await requireViewableRepo(repoId, viewerId);
     return { ok: true, data: toRepo(row, viewerId) };
 }
 
-async function getRepoCommits(repoId, viewerId = null) {
+async function getCheckedRepoCommits(repoId, viewerId = null) {
     await requireViewableRepo(repoId, viewerId);
     const rows = await recipeDb.listCommitsByRecipeId(repoId, 100);
     return { ok: true, data: rows.map(toCommit) };
 }
 
-async function getRepoCommit(repoId, commitId, viewerId = null) {
+async function getCheckedRepoCommit(repoId, commitId, viewerId = null) {
     await requireViewableRepo(repoId, viewerId);
 
     const row = await recipeDb.getCommitByRecipeId(repoId, commitId);
@@ -222,9 +222,9 @@ module.exports = {
     createRepository,
     forkRepository,
     searchReposByCurrentUser,
-    getRepoDetail,
-    getRepoCommits,
-    getRepoCommit,
+    getCheckedRepoDetail,
+    getCheckedRepoCommits,
+    getCheckedRepoCommit,
     updateRepository,
     deleteRepository
 };

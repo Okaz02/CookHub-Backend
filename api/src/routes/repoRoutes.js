@@ -7,9 +7,9 @@ const {
     createRepository,
     forkRepository,
     searchReposByCurrentUser,
-    getRepoDetail,
-    getRepoCommits,
-    getRepoCommit,
+    getCheckedRepoDetail,
+    getCheckedRepoCommits,
+    getCheckedRepoCommit,
     updateRepository,
     deleteRepository
 } = require('../services/repoService');
@@ -34,19 +34,19 @@ router.get('/trend', optionalAuth, asyncHandler(async (req, res) => {
 // トークンは任意。非公開リポジトリは管理者（オーナー）のトークンがないと 403 になる。
 router.get('/:id', validateNumericParams('id'), optionalAuth, asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const result = await getRepoDetail(id, req.account?.user_id);
+    const result = await getCheckedRepoDetail(id, req.account?.user_id);
     res.status(200).json(result);
 }));
 
 router.get('/:id/commits', validateNumericParams('id'), optionalAuth, asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const result = await getRepoCommits(id, req.account?.user_id);
+    const result = await getCheckedRepoCommits(id, req.account?.user_id);
     res.status(200).json(result);
 }));
 
 router.get('/:id/commits/:commitId', validateNumericParams('id'), optionalAuth, asyncHandler(async (req, res) => {
     const { id, commitId } = req.params;
-    const result = await getRepoCommit(id, commitId, req.account?.user_id);
+    const result = await getCheckedRepoCommit(id, commitId, req.account?.user_id);
     res.status(200).json(result);
 }));
 
