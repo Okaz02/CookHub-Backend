@@ -44,19 +44,21 @@ router.get('/:id/commits', validateNumericParams('id'), optionalAuth, asyncHandl
     res.status(200).json(result);
 }));
 
-// commitId は Dolt のコミットハッシュ（数値ではない）なので数値バリデーションの対象外。
-// 存在しないハッシュは getRepoCommit 側が 404 を返す。
 router.get('/:id/commits/:commitId', validateNumericParams('id'), optionalAuth, asyncHandler(async (req, res) => {
     const { id, commitId } = req.params;
     const result = await getRepoCommit(id, commitId, req.account?.user_id);
     res.status(200).json(result);
 }));
 
-// 既存レシピを自分のレシピとして複製する。body は任意で、
-// fork_type（1 = アレンジ / 2 = 移植）や title などを渡すとその項目だけ変えて複製できる。
 router.post('/:id/fork', validateNumericParams('id'), requireAuth, asyncHandler(async (req, res) => {
     const { id } = req.params;
     const result = await forkRepository(req.account?.user_id, id, req.body);
+    res.status(201).json(result);
+}));
+
+router.post('/:id/pull-request', validateNumericParams('id'), requireAuth, asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const result = await createPullRequest(req.account?.user_id, id, req.body);
     res.status(201).json(result);
 }));
 

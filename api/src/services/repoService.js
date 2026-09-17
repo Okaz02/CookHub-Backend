@@ -108,9 +108,10 @@ function toDuplicateNameError(error) {
     return error;
 }
 
-// 既定値の補完は recipeDb 側に任せ、ここでは必須項目の検証だけをする。
+// require* (権限確認) とは別物の入力チェック。誰がアクセスしているかは見ず、
+// payload に title/name が入っているかだけを見る。既定値の補完は recipeDb 側に任せる。
 // 戻り値はコミットメッセージに使う
-function requireTitle(payload) {
+function resolveTitle(payload) {
     const title = payload.title ?? payload.name;
 
     if (!title) {
@@ -132,7 +133,7 @@ async function saveRepo(userId, payload, message) {
 }
 
 async function createRepository(ownerId, payload) {
-    const title = requireTitle(payload);
+    const title = resolveTitle(payload);
     const message = payload.commit_message || `レシピ作成: ${title}`;
 
     return saveRepo(ownerId, payload, message);
@@ -153,7 +154,7 @@ async function forkRepository(userId, repoId, payload = {}) {
 
     // 元レシピの上に payload を重ねる。渡された項目だけが上書きされ、残りは引き継がれる
     const merged = { ...source, ...payload, fork_type: forkType, parent_recipe_id: source.recipe_id };
-    const title = requireTitle(merged);
+    const title = resolveTitle(merged);
     const kind = forkType === FORK_TYPE_PORT ? '移植' : 'アレンジ';
     const message = payload.commit_message
         || `レシピを${kind}: ${source.username}/${source.title} → ${title}`;
@@ -202,7 +203,7 @@ async function getRepoCommit(repoId, commitId, viewerId = null) {
 async function updateRepository(userId, repoId, payload) {
     await requireAdministrableRepo(repoId, userId, '編集');
 
-    const title = requireTitle(payload);
+    const title = resolveTitle(payload);
     const message = payload.commit_message || `レシピ更新: ${title}`;
     const { commit } = await recipeDb.updateRecipeById(repoId, userId, payload, message);
 
