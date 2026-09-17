@@ -1,19 +1,25 @@
--- リポジトリ一覧。Gitea のリポジトリに相当するメタデータを cookhub 側で保持し、
--- 実データは default_branch が指す Dolt のブランチでバージョン管理する。
+-- レシピ本体。Gitea のリポジトリに相当するメタデータを cookhub 側で保持し、
+-- 材料・手順・必須環境は recipe_* テーブルにぶら下げる。
+-- 同じ人が同じ名前のレシピを2つ持てないよう (owner_id, title) に一意制約を張る
+-- （API はこの重複エラーを 409 に変換している）。
 USE cookhub;
 
-CREATE TABLE IF NOT EXISTS repos (
-    repo_id        INT          NOT NULL AUTO_INCREMENT,
-    owner_id       INT          NOT NULL,
-    name           VARCHAR(255) NOT NULL,
-    description    TEXT         NULL,
-    default_branch VARCHAR(255) NOT NULL DEFAULT 'main',
-    stars_count    INT          NOT NULL DEFAULT 0,
-    is_private     BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (repo_id),
-    UNIQUE KEY uq_repos_owner_name (owner_id, name),
+CREATE TABLE IF NOT EXISTS repos_information (
+    recipe_id        INT          NOT NULL AUTO_INCREMENT,
+    owner_id         INT          NOT NULL,
+    parent_recipe_id INT          NULL,             -- フォーク元。オリジナルなら NULL
+    title            VARCHAR(255) NOT NULL,
+    thumbnail        VARCHAR(255) NULL,
+    description      TEXT         NULL,
+    default_branch   VARCHAR(255) NOT NULL DEFAULT 'main',
+    stars_count      INT          NOT NULL DEFAULT 0,
+    is_private       TINYINT(1)   NOT NULL DEFAULT 0,
+    is_draft         TINYINT(1)   NOT NULL,
+    fork_type        TINYINT      NOT NULL,         -- 0 = オリジナル / 1 = アレンジ / 2 = 移植
+    created_at       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (recipe_id),
+    UNIQUE KEY uq_repos_owner_name (owner_id, title),
     KEY idx_repos_created_at (created_at),
     CONSTRAINT fk_repos_owner
         FOREIGN KEY (owner_id) REFERENCES accounts (user_id) ON DELETE CASCADE
