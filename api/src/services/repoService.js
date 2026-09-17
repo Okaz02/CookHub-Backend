@@ -245,6 +245,14 @@ async function createCheckedPullRequest(userId, repoId, payload = {}) {
     return { ok: true, commit, data: pullRequest };
 }
 
+async function mergeCheckedPullRequest(userId, prId, payload = {}) {
+
+    await requireAdministrableRepo(repoId, userId, '編集');
+    const { commit, pullRequest } = await recipeDb.mergePullRequest(prId, userId, payload.commit_message || 'プルリクエストをマージ');
+    
+    return { ok: true, commit, data: pullRequest };
+}
+
 module.exports = {
     searchReposByStars,
     createRepository,
@@ -255,5 +263,6 @@ module.exports = {
     getCheckedRepoCommit,
     updateCheckedRepository,
     deleteCheckedRepository,
-    createCheckedPullRequest
+    createCheckedPullRequest,
+    mergeCheckedPullRequest
 };

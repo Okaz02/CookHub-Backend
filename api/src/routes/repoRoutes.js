@@ -56,10 +56,16 @@ router.post('/:id/fork', validateNumericParams('id'), requireAuth, asyncHandler(
     res.status(201).json(result);
 }));
 
-router.post('/:id/pull-request', validateNumericParams('id'), requireAuth, asyncHandler(async (req, res) => {
+router.post('/:id/pull-request/create', validateNumericParams('id'), requireAuth, asyncHandler(async (req, res) => {
     const { id } = req.params;
     const result = await createCheckedPullRequest(req.account?.user_id, id, req.body);
     res.status(201).json(result);
+}));
+
+router.post('/:id/pull-request/merge', validateNumericParams('id'), requireAuth, asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const result = await mergeCheckedPullRequest(req.account?.user_id, id, req.body);
+    res.status(200).json(result);
 }));
 
 router.patch('/:id', validateNumericParams('id'), requireAuth, asyncHandler(async (req, res) => {
