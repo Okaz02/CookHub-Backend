@@ -364,6 +364,7 @@ async function deleteRecipeById(recipeId, userId, commitMessage) {
         await connection.execute('DELETE FROM recipe_environment WHERE recipe_id = ?', [id]);
         await connection.execute('DELETE FROM recipe_ingredients WHERE recipe_id = ?', [id]);
         await connection.execute('DELETE FROM recipe_steps WHERE recipe_id = ?', [id]);
+        await connection.execute('DELETE FROM recipe_pull_request WHERE recipe_id = ?', [id]);
         await connection.execute('DELETE FROM repos_information WHERE recipe_id = ?', [id]);
 
         await connection.commit();
@@ -430,6 +431,24 @@ async function updateRecipeById(recipeId, userId, recipe, commitMessage) {
     return { commit };
 }
 
+// recipe_pull_request.created_at / updated_at はDEFAULT値を持たない（NOT NULLだが自動補完されない）
+// ため、NOW() を明示的に渡す必要がある
+async function createPullRequest(recipeId, userId, pullRequest, commitMessage) {
+    const { title, content } = pullRequest;
+    const id = Number(recipeId);
+
+    const [result] = await pool.execute(
+        `INSERT INTO recipe_pull_request (recipe_id, title, content, created_at, updated_at)
+         VALUES (?, ?, ?, NOW(), NOW())`,
+        [id, title, content ?? null]
+    );
+
+    const [rows] = await pool.query('SELECT * FROM recipe_pull_request WHERE id = ?', [result.insertId]);
+    const commit = await commitDolt(commitMessage, userId);
+
+    return { commit, pullRequest: rows[0] || null };
+}
+
 module.exports = {
     createRecipe,
     listCommitsByRecipeId,
@@ -438,5 +457,6 @@ module.exports = {
     listRecipesByOwnerId,
     getRecipeById,
     updateRecipeById,
-    deleteRecipeById
+    deleteRecipeById,
+    createPullRequest
 };
