@@ -5,13 +5,13 @@ const validateNumericParams = require('../middleware/validateNumericParams');
 const {
     searchReposByStars,
     createRepository,
-    forkRepository,
+    forkCheckedRepository,
     searchReposByCurrentUser,
     getCheckedRepoDetail,
     getCheckedRepoCommits,
     getCheckedRepoCommit,
-    updateRepository,
-    deleteRepository
+    updateCheckedRepository,
+    deleteCheckedRepository
 } = require('../services/repoService');
 
 const router = express.Router();
@@ -52,7 +52,7 @@ router.get('/:id/commits/:commitId', validateNumericParams('id'), optionalAuth, 
 
 router.post('/:id/fork', validateNumericParams('id'), requireAuth, asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const result = await forkRepository(req.account?.user_id, id, req.body);
+    const result = await forkCheckedRepository(req.account?.user_id, id, req.body);
     res.status(201).json(result);
 }));
 
@@ -64,13 +64,13 @@ router.post('/:id/pull-request', validateNumericParams('id'), requireAuth, async
 
 router.patch('/:id', validateNumericParams('id'), requireAuth, asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const result = await updateRepository(req.account?.user_id, id, req.body);
+    const result = await updateCheckedRepository(req.account?.user_id, id, req.body);
     res.status(200).json(result);
 }));
 
 router.delete('/:id', validateNumericParams('id'), requireAuth, asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const result = await deleteRepository(req.account?.user_id, id);
+    const result = await deleteCheckedRepository(req.account?.user_id, id);
     res.status(200).json(result);
 }));
 

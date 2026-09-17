@@ -142,7 +142,7 @@ async function createRepository(ownerId, payload) {
 // 既存レシピを自分のレシピとして複製する（GitHub のフォーク相当の「アレンジする」）。
 // 材料・手順・必須環境はそのまま引き継ぎ、payload に入っている項目だけ上書きする。
 // 元レシピは parent_recipe_id に残るので、あとから派生をたどって家系図を作れる。
-async function forkRepository(userId, repoId, payload = {}) {
+async function forkCheckedRepository(userId, repoId, payload = {}) {
     const source = await requireViewableRepo(repoId, userId);
 
     const forkType = Number(payload.fork_type ?? FORK_TYPE_ARRANGE);
@@ -200,7 +200,7 @@ async function getCheckedRepoCommit(repoId, commitId, viewerId = null) {
     return { ok: true, data: { ...toCommit(row), changes: row.changes } };
 }
 
-async function updateRepository(userId, repoId, payload) {
+async function updateCheckedRepository(userId, repoId, payload) {
     await requireAdministrableRepo(repoId, userId, '編集');
 
     const title = resolveTitle(payload);
@@ -211,7 +211,7 @@ async function updateRepository(userId, repoId, payload) {
     return { ok: true, commit, data: toRepo(updated, userId) };
 }
 
-async function deleteRepository(userId, repoId) {
+async function deleteCheckedRepository(userId, repoId) {
     const existing = await requireAdministrableRepo(repoId, userId, '削除');
     const { commit } = await recipeDb.deleteRecipeById(repoId, userId, `レシピ削除: ${existing.title}`);
     return { ok: true, commit, data: { id: existing.recipe_id } };
@@ -220,11 +220,11 @@ async function deleteRepository(userId, repoId) {
 module.exports = {
     searchReposByStars,
     createRepository,
-    forkRepository,
+    forkCheckedRepository,
     searchReposByCurrentUser,
     getCheckedRepoDetail,
     getCheckedRepoCommits,
     getCheckedRepoCommit,
-    updateRepository,
-    deleteRepository
+    updateCheckedRepository,
+    deleteCheckedRepository
 };
