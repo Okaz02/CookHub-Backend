@@ -1,7 +1,7 @@
 # cookhub
 
 Dolt（MySQL互換のバージョン管理データベース）を基盤とした、レシピのバージョン管理サービス。
-レシピを GitHub / Gitea のリポジトリになぞらえて扱い、作成・編集・フォーク・プルリクエストの
+レシピを GitHubのリポジトリになぞらえて扱い、作成・編集・フォーク・プルリクエストの
 たびに Dolt のコミットとして履歴が残る。
 
 ## 構成
@@ -81,9 +81,8 @@ SELECT * FROM dolt_status;        -- 未コミットの変更
 SELECT * FROM dolt_diff('HEAD~1', 'HEAD', 'repos_information');
 ```
 
-コミットは `-A`（その時点の未コミット変更をすべて含む）で作られるため、無関係なテーブルの
-変更も同じコミットに入る。コミットが不要な場合は `api/.env` で `DOLT_AUTO_COMMIT=false` に
-する。コミットに失敗してもAPIのレスポンスは成功のまま、エラーはログにのみ出力する。
+コミットが不要な場合は `api/.env` で `DOLT_AUTO_COMMIT=false` にする。コミットに失敗しても
+APIのレスポンスは成功のまま（`commit` が `null` になる）、エラーはログにのみ出力する。
 
 ## セットアップ
 
@@ -143,22 +142,28 @@ Authorization: Bearer <token>
 
 ## API一覧
 
-| メソッド | パス | 認証 | 概要 |
-| --- | --- | --- | --- |
-| POST | `/api/accounts/register` | 不要 | アカウント作成 + トークン発行 |
-| POST | `/api/accounts/login` | 不要 | ログイン + トークン発行 |
-| GET | `/api/accounts/session` | 必須 | ログイン状態の確認 |
-| POST | `/api/repos` | 必須 | レシピ作成 |
-| GET | `/api/repos/mine` | 必須 | 自分のレシピ一覧 |
-| GET | `/api/repos/trend` | 任意 | 公開レシピ一覧 |
-| GET | `/api/repos/:id` | 任意 | レシピ詳細 |
-| GET | `/api/repos/:id/commits` | 任意 | 変更履歴の一覧 |
-| GET | `/api/repos/:id/commits/:commitId` | 任意 | 変更履歴1件の詳細 |
-| POST | `/api/repos/:id/fork` | 必須 | レシピを複製（アレンジ / 移植） |
-| PATCH | `/api/repos/:id` | 必須 | レシピ編集（オーナーのみ） |
-| DELETE | `/api/repos/:id` | 必須 | レシピ削除（オーナーのみ） |
-| POST | `/api/repos/:id/pull-request/create` | 必須 | プルリクエスト作成（`:id` = 自分のフォーク） |
-| POST | `/api/repos/:id/pull-request/merge` | 必須 | プルリクエストのマージ（`:id` = **プルリクエストのID**） |
+「ボディ」の **必須** は送らないとエラーになるもの、**任意** は送っても送らなくてもよいもの、
+**なし** は送っても一切読まれないもの。
+
+| メソッド | パス | 認証 | ボディ | 概要 |
+| --- | --- | --- | --- | --- |
+| POST | `/api/accounts/register` | 不要 | 必須 `username` `email` `password` | アカウント作成 + トークン発行 |
+| POST | `/api/accounts/login` | 不要 | 必須 `username` `password` | ログイン + トークン発行 |
+| GET | `/api/accounts/session` | 必須 | なし | ログイン状態の確認 |
+| POST | `/api/repos` | 必須 | 必須 `title` | レシピ作成 |
+| GET | `/api/repos/mine` | 必須 | なし | 自分のレシピ一覧 |
+| GET | `/api/repos/trend` | 任意 | なし | 公開レシピ一覧 |
+| GET | `/api/repos/:id` | 任意 | なし | レシピ詳細 |
+| GET | `/api/repos/:id/commits` | 任意 | なし | 変更履歴の一覧 |
+| GET | `/api/repos/:id/commits/:commitId` | 任意 | なし | 変更履歴1件の詳細 |
+| POST | `/api/repos/:id/fork` | 必須 | 任意（全項目） | レシピを複製（アレンジ / 移植） |
+| PATCH | `/api/repos/:id` | 必須 | 必須 `title` | レシピ編集（オーナーのみ） |
+| DELETE | `/api/repos/:id` | 必須 | なし | レシピ削除（オーナーのみ） |
+| POST | `/api/repos/:id/pull-request/create` | 必須 | 必須 `title` | プルリクエスト作成（`:id` = 自分のフォーク） |
+| POST | `/api/repos/:id/pull-request/merge` | 必須 | 任意 `commit_message` のみ | プルリクエストのマージ（`:id` = **プルリクエストのID**） |
+
+`Content-Type: application/json` を付けてボディを送る場合、JSONとして壊れていると
+`400` になる（ボディを送らないときはヘッダーごと省略してよい）。
 
 `:id` と `:commitId` のうち `:id` は数値でなければ `400` を返す。`:commitId` は Dolt の
 コミットハッシュ（英数字）なので数値検証の対象外で、存在しなければ `404` になる。
@@ -166,6 +171,8 @@ Authorization: Bearer <token>
 ## API仕様
 
 ### POST /api/accounts/register
+
+必要なもの: **ボディのみ**。トークンは要らない。
 
 ```json
 { "username": "string", "email": "string", "password": "string" }
@@ -177,6 +184,8 @@ Authorization: Bearer <token>
 
 ### POST /api/accounts/login
 
+必要なもの: **ボディのみ**。トークンは要らない。
+
 ```json
 { "username": "string", "password": "string" }
 ```
@@ -187,12 +196,15 @@ Authorization: Bearer <token>
 
 ### GET /api/accounts/session
 
+必要なもの: **トークンのみ**。ボディは読まれない。
+
 - `200`: アカウント情報
 - `401`: トークンが未指定または無効
 
 ### POST /api/repos
 
-必須は `title`（または `name`）だけで、他はすべて任意。
+必要なもの: **トークン**（作成者になる）＋ **ボディ**。
+ボディの必須項目は `title`（または `name`）だけで、他はすべて任意。
 
 ```json
 {
@@ -215,9 +227,14 @@ Authorization: Bearer <token>
 
 ### GET /api/repos/mine
 
+必要なもの: **トークンのみ**（そのトークンの持ち主のレシピを返す）。ボディは読まれない。
+
 - `200`: `{ "ok": true, "data": [...] }` — 自分のレシピを作成日時の新しい順に返す（非公開も含む）
 
 ### GET /api/repos/trend
+
+必要なもの: **なし**。トークンは任意で、付けると自分のレシピの
+`permissions.admin` が `true` になる（返る件数は変わらない）。
 
 - `200`: `{ "ok": true, "data": [...] }` — 公開レシピを作成日時の新しい順に最大100件取得し、
   `stars_count` の降順に並べ替えたもの
@@ -248,6 +265,8 @@ Authorization: Bearer <token>
 
 ### GET /api/repos/:id
 
+必要なもの: 公開レシピなら**なし**。非公開レシピはオーナーのトークンが要る（無いと `403`）。
+
 - `200`: レシピ詳細。一覧の形に加えて `environment` / `ingredients` / `steps` と、
   直近のコミット `latest_commit` が入る
 - `400`: `:id` が数値でない
@@ -256,12 +275,14 @@ Authorization: Bearer <token>
 
 ### GET /api/repos/:id/commits
 
+必要なもの: `GET /api/repos/:id` と同じ。
+
 - `200`: そのレシピに触れたコミットを新しい順に最大100件。材料や手順だけの変更も含む
 - `400` / `403` / `404`: 上と同じ
 
 ### GET /api/repos/:id/commits/:commitId
 
-`:commitId` は `GET /api/repos/:id/commits` の `sha`。
+必要なもの: `GET /api/repos/:id` と同じ。`:commitId` は `GET /api/repos/:id/commits` の `sha`。
 
 - `200`: コミット1件の詳細。`changes` にそのコミットで変わった内容が
   `info` / `environment` / `ingredients` / `steps` ごとに入り、各行は `diff_type`
@@ -271,7 +292,8 @@ Authorization: Bearer <token>
 
 ### POST /api/repos/:id/fork
 
-`:id` は**複製したい元レシピ**のID。ボディはすべて任意（省略可）。材料・手順・必須環境は
+必要なもの: **トークン**（複製したレシピのオーナーになる）。ボディは**任意**で丸ごと省略できる。
+`:id` は**複製したい元レシピ**のID。材料・手順・必須環境は
 元レシピをそのまま引き継ぎ、渡した項目だけが上書きされる。
 
 ```json
@@ -294,6 +316,7 @@ Authorization: Bearer <token>
 
 ### PATCH /api/repos/:id
 
+必要なもの: **オーナーのトークン**（他人のレシピは `403`）＋ **ボディ**。
 ボディは `POST /api/repos` と同じ形で、`title`（または `name`）は毎回必須。
 `environment` / `ingredients` / `steps` は**配列を渡したときだけ**丸ごと差し替えられる
 （省略すれば現状維持、`[]` を渡せば全削除）。
@@ -305,39 +328,12 @@ Authorization: Bearer <token>
 
 ### DELETE /api/repos/:id
 
+必要なもの: **オーナーのトークンのみ**（他人のレシピは `403`）。ボディは読まれない。
 材料・手順・必須環境・そのレシピが関わるプルリクエストも一緒に削除される。
 
 - `200`: `{ "ok": true, "commit": "...", "data": { "id": 1 } }`
 - `403`: 自分のレシピではない
 - `404`: レシピが無い
-
-### プルリクエストの流れ
-
-他人のレシピを直接は編集できないので、「フォークして自分のレシピを直し、その内容を
-取り込んでもらう」という手順を踏む。**2つのエンドポイントで `:id` の意味が違う**ので注意。
-
-```bash
-# 1. Bさんが、Aさんのレシピ(id=1)をフォークする → 自分のレシピ(id=2)ができる
-curl -X POST http://localhost:3001/api/repos/1/fork \
-  -H "Authorization: Bearer $B_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"title":"肉じゃが（砂糖ひかえめ）"}'
-
-# 2. Bさんが、自分のフォーク(id=2)を編集する
-curl -X PATCH http://localhost:3001/api/repos/2 \
-  -H "Authorization: Bearer $B_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"title":"肉じゃが（砂糖ひかえめ）","ingredients":[{"name":"砂糖","amount":5,"unit":"g"}]}'
-
-# 3. Bさんが、フォーク(id=2)を指定してプルリクエストを出す
-#    → レスポンスの data.id がプルリクエストのID（例: 7）
-curl -X POST http://localhost:3001/api/repos/2/pull-request/create \
-  -H "Authorization: Bearer $B_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"title":"砂糖を減らしたい","content":"10gだと甘すぎたので5gにしました"}'
-
-# 4. Aさんが、プルリクエストのID(7)を指定してマージする
-#    → Aさんのレシピ(id=1)の材料が砂糖5gになる
-curl -X POST http://localhost:3001/api/repos/7/pull-request/merge \
-  -H "Authorization: Bearer $A_TOKEN"
-```
 
 ### POST /api/repos/:id/pull-request/create
 
@@ -345,19 +341,9 @@ curl -X POST http://localhost:3001/api/repos/7/pull-request/merge \
 （`parent_recipe_id`）が自動的に使われるので、ボディで指定する必要は無い。
 フォークではないレシピを指定すると `400` になる。
 
-**リクエスト**
-
-```http
-POST /api/repos/2/pull-request/create
-Authorization: Bearer <自分のフォークのオーナーのtoken>
-Content-Type: application/json
-```
-
-| 項目 | 必須 | 内容 |
-| --- | --- | --- |
-| `title` | ○ | プルリクエストの件名 |
-| `content` | | 説明文。省略すると `null` |
-| `commit_message` | | Doltコミットのメッセージ。省略時は `プルリクエスト作成: <title>` |
+必要なもの: **トークン**（`:id` のフォークのオーナーであること。他人のレシピを指定すると `403`）
+＋ **ボディ**。`title` のみ必須項目で、`content` は説明文、`commit_message` の省略時は
+`プルリクエスト作成: <title>`。
 
 ```json
 {
@@ -365,8 +351,6 @@ Content-Type: application/json
   "content": "10g だと甘すぎたので 5g にしました"
 }
 ```
-
-**レスポンス**
 
 - `201`: 作成されたプルリクエスト。**この `data.id` がマージに使うID**
 
@@ -403,44 +387,16 @@ Content-Type: application/json
 マージできるのは**取り込み先（フォーク元）のオーナー**だけ。提案したユーザー自身は
 マージできない（`403`）。
 
-**リクエスト**（ボディ不要）
+必要なもの: **取り込み先レシピのオーナーのトークンのみ**。ボディは**任意**で、
+読まれるのは `commit_message` だけ。省略時は
+`プルリクエストをマージ: <PRのtitle>` になる。ボディごと省略しても `200` で通る。
 
-```http
-POST /api/repos/7/pull-request/merge
-Authorization: Bearer <取り込み先レシピのオーナーのtoken>
-```
-
-ボディを付ける場合、見られるのは `commit_message` だけ。省略時は
-`プルリクエストをマージ: <PRのtitle>` になる。
-
-```json
-{ "commit_message": "砂糖ひかえめの提案を取り込む" }
-```
-
-**何が変わるか**: 提案元レシピの**説明・必須環境・材料・手順**が取り込み先に丸ごと
-書き写される（取り込み先の既存の材料・手順は置き換えられる）。タイトル・公開設定・
-サムネイルなど取り込み先自身の属性は変わらない。提案元のレシピはそのまま残る。
-
-**レスポンス**
+提案元レシピの**説明・必須環境・材料・手順**が取り込み先に丸ごと書き写される
+（取り込み先の既存の材料・手順は置き換えられる）。タイトル・公開設定・サムネイルなど
+取り込み先自身の属性は変わらない。提案元のレシピはそのまま残る。
 
 - `200`: マージ後のプルリクエスト。`status` が `1`、`merged_at` と
   `merged_commit_hash` が埋まる
-
-```json
-{
-  "ok": true,
-  "commit": "ugb6kotp98n1flrb4v7be0phq1236b93",
-  "data": {
-    "id": 7,
-    "target_recipe_id": 1,
-    "source_recipe_id": 2,
-    "status": 1,
-    "merged_commit_hash": "ugb6kotp98n1flrb4v7be0phq1236b93",
-    "merged_at": "2026-09-17T10:41:59.000Z"
-  }
-}
-```
-
 - `400`: `:id` が数値でない
 - `401`: トークンが未指定または無効
 - `403`: 取り込み先のオーナーではない（提案者自身がマージしようとした場合を含む）
