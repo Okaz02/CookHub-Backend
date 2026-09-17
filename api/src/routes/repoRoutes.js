@@ -11,7 +11,9 @@ const {
     getCheckedRepoCommits,
     getCheckedRepoCommit,
     updateCheckedRepository,
-    deleteCheckedRepository
+    deleteCheckedRepository,
+    createCheckedPullRequest,
+    mergeCheckedPullRequest
 } = require('../services/repoService');
 
 const router = express.Router();

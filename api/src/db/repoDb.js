@@ -443,6 +443,11 @@ async function updateRecipeById(recipeId, userId, recipe, commitMessage) {
 // マージ済みを表す値を決める
 const PR_STATUS_MERGED = 1;
 
+async function getPullRequestById(prId) {
+    const [rows] = await pool.query('SELECT * FROM recipe_pull_requests WHERE id = ?', [Number(prId)]);
+    return rows[0] || null;
+}
+
 // source（フォークした自分のレシピ）の変更を target（フォーク元のレシピ）に
 // 取り込んでほしいという提案を1件作る
 async function createPullRequest(sourceRecipeId, targetRecipeId, userId, pullRequest, commitMessage) {
@@ -454,10 +459,10 @@ async function createPullRequest(sourceRecipeId, targetRecipeId, userId, pullReq
         [Number(sourceRecipeId), Number(targetRecipeId), Number(userId), title, content ?? null]
     );
 
-    const [rows] = await pool.query('SELECT * FROM recipe_pull_requests WHERE id = ?', [result.insertId]);
+    const created = await getPullRequestById(result.insertId);
     const commit = await commitDolt(commitMessage, userId);
 
-    return { commit, pullRequest: rows[0] || null };
+    return { commit, pullRequest: created };
 }
 
 // PR を1件マージする。source の中身（説明・必須環境・材料・手順）を target に書き写す。
@@ -465,8 +470,7 @@ async function createPullRequest(sourceRecipeId, targetRecipeId, userId, pullReq
 // commitDolt は --skip-empty により null を返すことがあるため merged_commit_hash では判定できない）。
 // タイトルや公開設定など target 自体の属性は変えない
 async function mergePullRequest(prId, userId, commitMessage) {
-    const [prRows] = await pool.query('SELECT * FROM recipe_pull_requests WHERE id = ?', [Number(prId)]);
-    const pullRequest = prRows[0];
+    const pullRequest = await getPullRequestById(prId);
     if (!pullRequest) {
         return null;
     }
@@ -508,8 +512,7 @@ async function mergePullRequest(prId, userId, commitMessage) {
     );
     await commitDolt(`プルリクエストをマージ済みとして記録: #${pullRequest.id}`, userId);
 
-    const [mergedRows] = await pool.query('SELECT * FROM recipe_pull_requests WHERE id = ?', [pullRequest.id]);
-    return { commit, pullRequest: mergedRows[0] || null };
+    return { commit, pullRequest: await getPullRequestById(pullRequest.id) };
 }
 
 module.exports = {
@@ -521,6 +524,7 @@ module.exports = {
     getRecipeById,
     updateRecipeById,
     deleteRecipeById,
+    getPullRequestById,
     createPullRequest,
     mergePullRequest
 };

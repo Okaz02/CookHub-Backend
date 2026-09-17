@@ -245,11 +245,21 @@ async function createCheckedPullRequest(userId, repoId, payload = {}) {
     return { ok: true, commit, data: pullRequest };
 }
 
+// PR をマージできるのは取り込まれる側（target = フォーク元）のオーナーだけ。
+// prId はレシピIDではないので、まず PR を引いて target_recipe_id を取り出してから権限を見る
 async function mergeCheckedPullRequest(userId, prId, payload = {}) {
+    const target = await recipeDb.getPullRequestById(prId);
+    if (!target) {
+        const err = new Error('プルリクエストが見つかりません');
+        err.status = 404;
+        throw err;
+    }
 
-    await requireAdministrableRepo(repoId, userId, '編集');
-    const { commit, pullRequest } = await recipeDb.mergePullRequest(prId, userId, payload.commit_message || 'プルリクエストをマージ');
-    
+    await requireAdministrableRepo(target.target_recipe_id, userId, 'マージ');
+
+    const message = payload.commit_message || `プルリクエストをマージ: ${target.title}`;
+    const { commit, pullRequest } = await recipeDb.mergePullRequest(prId, userId, message);
+
     return { ok: true, commit, data: pullRequest };
 }
 
