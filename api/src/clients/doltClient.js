@@ -1,17 +1,14 @@
-require('dotenv').config();
 const { pool } = require('../db/pool');
-
-const AUTO_COMMIT = (process.env.DOLT_AUTO_COMMIT || 'true') !== 'false';
-const AUTHOR = process.env.DOLT_COMMIT_AUTHOR || 'cookhub-api <api@cookhub.local>';
+const { DOLT_AUTO_COMMIT, DOLT_COMMIT_AUTHOR } = require('../config');
 
 // データの変更履歴を残すのが目的なので、コミットに失敗してもリクエスト自体は
 // 成功させ、ログだけ残す。
 async function commitDolt(message, userId) {
-    if (!AUTO_COMMIT) {
+    if (!DOLT_AUTO_COMMIT) {
         return null;
     }
 
-    let author = AUTHOR;
+    let author = DOLT_COMMIT_AUTHOR;
     if (userId != null) {
         const [accounts] = await pool.query(
             'SELECT username, email FROM accounts WHERE user_id = ?',

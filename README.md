@@ -14,8 +14,10 @@ cookhub/
     ├── server.js         # エントリポイント
     └── src/
         ├── app.js            # Express アプリ定義・エラーハンドラ
+        ├── config.js         # .env の読み込みと検証
         ├── routes/           # HTTPルーティング
         ├── middleware/       # 認証・パラメータ検証・非同期ラッパー
+        ├── schemas/          # zod による入力スキーマ（型・必須・上限の定義）
         ├── services/         # ビジネスロジック（権限判定・レスポンス整形）
         ├── clients/          # Dolt のバージョン管理操作
         └── db/               # Dolt への接続・クエリ・スキーマ定義
@@ -30,12 +32,32 @@ DBのテーブル・カラムは `recipe_id` / `repos_information` のように*
 | 層 | 語彙 | 責務 |
 | --- | --- | --- |
 | `db/` | recipe | 生の永続化操作のみ。権限チェックもレスポンス整形もしない |
-| `services/` | repo / commit | 権限判定、入力検証、DB行→APIレスポンスへの変換 |
+| `schemas/` | repo / commit | 受け付ける入力の型・必須・上限の定義。zod スキーマだけを置く |
+| `services/` | repo / commit | 権限判定、スキーマによる入力検証、DB行→APIレスポンスへの変換 |
 | `routes/` | repo / commit | HTTPの入出力のみ。`req.account?.user_id` を service に渡すだけ |
 
 service層の関数名は、内部で権限チェックを行うものだけ `Checked` を含む
 （`getCheckedRepoDetail` / `updateCheckedRepository` など）。`require*`（`requireViewableRepo`,
 `requireAdministrableRepo`）は「権限が無ければ例外を投げる」という意味で統一している。
+
+### 入力の検証
+
+外から来る値はすべて `api/src/schemas/` の zod スキーマを通してから処理に入る。スキーマは
+DBの列定義（型・NOT NULL・`VARCHAR` の長さ）をそのまま写したもので、既定値の補完も兼ねる。
+db層はこのスキーマを通った値しか受け取らないので、型の整形や既定値の補完をしない。
+
+| 対象 | 検証する場所 |
+| --- | --- |
+| パスパラメータ | `middleware/validateParams.js`。検証後の `req.params.id` は数値になる |
+| ボディ | service層（`recipeSchema` / `pullRequestSchema` など） |
+| アクセストークン | `middleware/auth.js`。40文字の16進文字列でなければDBを引かずに `401` |
+| 環境変数 | `config.js`。起動時に検証し、設定が壊れていればその場でサーバーが落ちる |
+
+スキーマに合わない値は `400` になり、どの項目が駄目だったのかが `error` に入る。
+
+```json
+{ "error": "ingredients.0.amount: 無効な入力: 数値が期待されましたが、NaNが入力されました" }
+```
 
 ### インフラ (docker-compose.yml)
 
@@ -119,6 +141,9 @@ npm install
 npm start
 ```
 
+`api/.env` の値は起動時に検証される。`DOLT_PORT` が数値でないといった設定ミスがあると、
+接続に失敗するまで待たずに、どの項目が悪いのかを表示して起動を止める。
+
 ## 認証
 
 `register` / `login` で発行されたトークンを `Authorization` ヘッダーに載せる。
@@ -165,8 +190,8 @@ Authorization: Bearer <token>
 `Content-Type: application/json` を付けてボディを送る場合、JSONとして壊れていると
 `400` になる（ボディを送らないときはヘッダーごと省略してよい）。
 
-`:id` と `:commitId` のうち `:id` は数値でなければ `400` を返す。`:commitId` は Dolt の
-コミットハッシュ（英数字）なので数値検証の対象外で、存在しなければ `404` になる。
+`:id` は数値でなければ `400` を返す。`:commitId` は Dolt のコミットハッシュなので数値ではなく、
+英数字以外が混ざっていれば `400`、形は正しいが存在しなければ `404` になる。
 
 ## API仕様
 
@@ -178,8 +203,11 @@ Authorization: Bearer <token>
 { "username": "string", "email": "string", "password": "string" }
 ```
 
+`username` は255文字まで、`email` はメールアドレスの形式で255文字まで、`password` は72文字まで
+（bcrypt が73文字目以降を見ないため、黙って切り捨てずに弾く）。
+
 - `201`: 作成されたアカウント情報 + `token`
-- `400`: 必須項目不足
+- `400`: 必須項目不足・形式違い
 - `409`: username/email が既に使われている
 
 ### POST /api/accounts/login
@@ -192,7 +220,7 @@ Authorization: Bearer <token>
 
 - `200`: アカウント情報 + `token`
 - `400`: 必須項目不足
-- `401`: 認証失敗
+- `401`: 認証失敗（トークンの形式が違う場合もここに含む）
 
 ### GET /api/accounts/session
 
@@ -220,8 +248,13 @@ Authorization: Bearer <token>
 }
 ```
 
+`is_private` / `is_draft` は真偽値、`ingredients[].amount` は数値（`"3"` のような数字の文字列も
+受け付ける）。「少々」のように数量が無い材料は `amount` / `unit` を省略するか `null` にする。
+文字列の長さはDBの列に合わせて、`title` / `thumbnail` / `key_name` / `value` / 材料名が255文字、
+`unit` が50文字まで。`commit_message` は送るなら空文字以外。
+
 - `201`: `{ "ok": true, "commit": "<コミットハッシュ>", "data": {...} }`
-- `400`: `title`（または `name`）が無い
+- `400`: `title`（または `name`）が無い / 型・長さがスキーマに合わない
 - `401`: トークンが未指定または無効
 - `409`: 同じ名前のレシピを既に持っている
 
@@ -305,7 +338,8 @@ Authorization: Bearer <token>
 ```
 
 `fork_type` は `1` = アレンジ（デフォルト）、`2` = 移植（別の環境・人数に作り直したもの）。
-元レシピは `parent_recipe_id` に残るので、あとから派生をたどれる。
+元レシピは `parent_recipe_id` に残るので、あとから派生をたどれる。レシピ名は `title` でも
+`name` でも指定でき、どちらも送らなければ元レシピと同じ名前になる。
 
 - `201`: 複製されたレシピ。`fork: true` と派生元の `parent_id` が入る
 - `400`: `fork_type` が 1 / 2 以外
@@ -322,7 +356,7 @@ Authorization: Bearer <token>
 （省略すれば現状維持、`[]` を渡せば全削除）。
 
 - `200`: 更新後のレシピ
-- `400`: `title`（または `name`）が無い / `:id` が数値でない
+- `400`: `title`（または `name`）が無い / 型・長さがスキーマに合わない / `:id` が数値でない
 - `403`: 自分のレシピではない
 - `404`: レシピが無い
 

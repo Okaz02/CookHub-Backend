@@ -6,14 +6,12 @@ const { registerAccount, loginAccount } = require('../services/accountService');
 const router = express.Router();
 
 router.post('/register', asyncHandler(async (req, res) => {
-    const { username, email, password } = req.body;
-    const account = await registerAccount(username, email, password);
+    const account = await registerAccount(req.body);
     res.status(201).json(account);
 }));
 
 router.post('/login', asyncHandler(async (req, res) => {
-    const { username, password } = req.body;
-    const account = await loginAccount(username, password);
+    const account = await loginAccount(req.body);
     res.status(200).json(account);
 }));
 

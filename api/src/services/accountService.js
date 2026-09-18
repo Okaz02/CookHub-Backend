@@ -8,6 +8,7 @@ const {
     touchAccessToken
 } = require('../db/accountDb');
 const { commitDolt } = require('../clients/doltClient');
+const { registerSchema, loginSchema } = require('../schemas/accountSchemas');
 
 const BCRYPT_ROUNDS = 10;
 
@@ -27,12 +28,8 @@ async function issueAccessToken(account) {
     return token;
 }
 
-async function registerAccount(username, email, password) {
-    if (!username || !email || !password) {
-        const err = new Error('username, email, password はすべて必須です');
-        err.status = 400;
-        throw err;
-    }
+async function registerAccount(payload) {
+    const { username, email, password } = registerSchema.parse(payload);
 
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
@@ -57,12 +54,8 @@ async function registerAccount(username, email, password) {
     return { ...account, token };
 }
 
-async function loginAccount(username, password) {
-    if (!username || !password) {
-        const err = new Error('username, password は必須です');
-        err.status = 400;
-        throw err;
-    }
+async function loginAccount(payload) {
+    const { username, password } = loginSchema.parse(payload);
 
     const credentials = await getAccountCredentialsByUsername(username);
     const passwordMatched = credentials
@@ -81,13 +74,8 @@ async function loginAccount(username, password) {
     return { ...account, token };
 }
 
+// トークンの形式は認証ミドルウェアが accessTokenSchema で検証済み。ここで見るのは失効の有無だけ
 async function getAccountBySession(token) {
-    if (!token) {
-        const err = new Error('token は必須です');
-        err.status = 400;
-        throw err;
-    }
-
     const tokenHash = hashAccessToken(token);
     const account = await getAccountByTokenHash(tokenHash);
 

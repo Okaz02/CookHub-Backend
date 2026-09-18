@@ -81,75 +81,9 @@ const COMMIT_DIFF_STEPS = `
     WHERE to_commit = ? AND (to_recipe_id = ? OR from_recipe_id = ?)
     ORDER BY to_sort_order, from_sort_order`;
 
-function normalizeJsonValue(...values) {
-    const value = values.find(
-        (candidate) => candidate !== undefined && candidate !== null && candidate !== ''
-    );
-
-    if (value === undefined) {
-        return null;
-    }
-
-    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-        return value;
-    }
-
-    return JSON.stringify(value);
-}
-
-function normalizeRecipeInput(recipe = {}) {
-    return {
-        title: normalizeJsonValue(recipe.title, recipe.name),
-        description: normalizeJsonValue(recipe.description, null),
-        defaultBranch: normalizeJsonValue(recipe.default_branch, 'main'),
-        parentRecipeId: normalizeJsonValue(recipe.parent_recipe_id, null),
-        isPrivate: normalizeJsonValue(recipe.is_private, false),
-        isDraft: normalizeJsonValue(recipe.is_draft, false),
-        forkType: normalizeJsonValue(recipe.fork_type, 0),
-        thumbnail: normalizeJsonValue(recipe.thumbnail, null)
-    };
-}
-
-function normalizeEnvironment(environment) {
-    if (!Array.isArray(environment)) {
-        return [];
-    }
-
-    return environment.map((entry = {}) => ({
-        id: entry.id != null ? Number(entry.id) : null,
-        keyName: entry.key_name,
-        value: entry.value
-    }));
-}
-
-function normalizeIngredients(ingredients) {
-    if (!Array.isArray(ingredients)) {
-        return [];
-    }
-
-    return ingredients.map((ingredient = {}) => ({
-        id: ingredient.id != null ? Number(ingredient.id) : null,
-        name: ingredient.name,
-        amount: ingredient.amount ?? null,
-        unit: ingredient.unit ?? null
-    }));
-}
-
-function normalizeSteps(steps) {
-    if (!Array.isArray(steps)) {
-        return [];
-    }
-
-    return steps.map((step = {}) => ({
-        id: step.id != null ? Number(step.id) : null,
-        body: step.body,
-        imageUrl: step.image_url ?? null
-    }));
-}
-
 const CHILD_TABLES = {
     environment: {
-        values: (row) => [row.keyName, row.value],
+        values: (row) => [row.key_name, row.value],
         selectIds: 'SELECT id FROM recipe_environment WHERE recipe_id = ?',
         update: `UPDATE recipe_environment
                  SET sort_order = ?, key_name = ?, value = ?
@@ -169,7 +103,7 @@ const CHILD_TABLES = {
         deleteIds: 'DELETE FROM recipe_ingredients WHERE id IN (?)'
     },
     steps: {
-        values: (row) => [row.body, row.imageUrl],
+        values: (row) => [row.body, row.image_url],
         selectIds: 'SELECT id FROM recipe_steps WHERE recipe_id = ?',
         update: `UPDATE recipe_steps
                  SET sort_order = ?, body = ?, image_url = ?
@@ -202,10 +136,9 @@ async function syncChildRows(connection, recipeId, tableKey, rows) {
     }
 }
 
-async function createRecipe(ownerId, recipe, commitMessage) {
-    const { title, description, defaultBranch, parentRecipeId, isPrivate, isDraft, forkType, thumbnail } =
-        normalizeRecipeInput(recipe);
-
+// recipe は repoSchemas の recipeSchema を通った値。列の型・既定値の補完は済んでいる。
+// parentRecipeId はフォーク元のレシピID（オリジナルなら null）
+async function createRecipe(ownerId, recipe, parentRecipeId, commitMessage) {
     const connection = await pool.getConnection();
     try {
         await connection.beginTransaction();
@@ -225,40 +158,37 @@ async function createRecipe(ownerId, recipe, commitMessage) {
             ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
             [
                 ownerId,
-                parentRecipeId === null ? null : Number(parentRecipeId),
-                title,
-                thumbnail,
-                description,
-                defaultBranch,
-                Number(isPrivate),
-                Number(isDraft),
-                Number(forkType)
+                parentRecipeId,
+                recipe.title,
+                recipe.thumbnail,
+                recipe.description,
+                recipe.default_branch,
+                Number(recipe.is_private),
+                Number(recipe.is_draft),
+                recipe.fork_type
             ]
         );
 
         const recipeId = result.insertId;
 
-        const environment = normalizeEnvironment(recipe.environment);
-        if (environment.length > 0) {
+        if (recipe.environment && recipe.environment.length > 0) {
             await connection.query(
                 'INSERT INTO recipe_environment (recipe_id, sort_order, key_name, value) VALUES ?',
-                [environment.map((row, i) => [recipeId, i, row.keyName, row.value])]
+                [recipe.environment.map((row, i) => [recipeId, i, row.key_name, row.value])]
             );
         }
 
-        const ingredients = normalizeIngredients(recipe.ingredients);
-        if (ingredients.length > 0) {
+        if (recipe.ingredients && recipe.ingredients.length > 0) {
             await connection.query(
                 'INSERT INTO recipe_ingredients (recipe_id, sort_order, name, amount, unit) VALUES ?',
-                [ingredients.map((row, i) => [recipeId, i, row.name, row.amount, row.unit])]
+                [recipe.ingredients.map((row, i) => [recipeId, i, row.name, row.amount, row.unit])]
             );
         }
 
-        const steps = normalizeSteps(recipe.steps);
-        if (steps.length > 0) {
+        if (recipe.steps && recipe.steps.length > 0) {
             await connection.query(
                 'INSERT INTO recipe_steps (recipe_id, sort_order, body, image_url) VALUES ?',
-                [steps.map((row, i) => [recipeId, i, row.body, row.imageUrl])]
+                [recipe.steps.map((row, i) => [recipeId, i, row.body, row.image_url])]
             );
         }
 
@@ -282,7 +212,7 @@ async function listRecentRecipes(limit = 100) {
          WHERE r.is_private = FALSE
          ORDER BY r.created_at DESC
          LIMIT ?`,
-        [Number(limit)]
+        [limit]
     );
     return rows;
 }
@@ -292,19 +222,18 @@ async function listRecipesByOwnerId(ownerId) {
         `${RECIPE_SELECT}
          WHERE r.owner_id = ?
          ORDER BY r.created_at DESC`,
-        [Number(ownerId)]
+        [ownerId]
     );
     return rows;
 }
 
 async function listCommitsByRecipeId(recipeId, limit = 100) {
-    const id = Number(recipeId);
     const [rows] = await pool.query(COMMIT_LIST_SELECT, [
-        id, id,
-        id, id,
-        id, id,
-        id, id,
-        Number(limit)
+        recipeId, recipeId,
+        recipeId, recipeId,
+        recipeId, recipeId,
+        recipeId, recipeId,
+        limit
     ]);
     return rows;
 }
@@ -315,8 +244,7 @@ async function getCommitByRecipeId(recipeId, commitHash) {
         return null;
     }
 
-    const id = Number(recipeId);
-    const params = [commitHash, id, id];
+    const params = [commitHash, recipeId, recipeId];
     const [[info], [environment], [ingredients], [steps]] = await Promise.all([
         pool.query(COMMIT_DIFF_REPO, params),
         pool.query(COMMIT_DIFF_ENVIRONMENT, params),
@@ -328,8 +256,7 @@ async function getCommitByRecipeId(recipeId, commitHash) {
 }
 
 async function getRecipeById(recipeId) {
-    const id = Number(recipeId);
-    const [rows] = await pool.query(`${RECIPE_SELECT} WHERE r.recipe_id = ?`, [id]);
+    const [rows] = await pool.query(`${RECIPE_SELECT} WHERE r.recipe_id = ?`, [recipeId]);
 
     const row = rows[0];
     if (!row) {
@@ -339,36 +266,35 @@ async function getRecipeById(recipeId) {
     const [[environment], [ingredients], [steps], commits] = await Promise.all([
         pool.query(
             'SELECT id, key_name, value FROM recipe_environment WHERE recipe_id = ? ORDER BY sort_order',
-            [id]
+            [recipeId]
         ),
         pool.query(
             'SELECT id, name, amount, unit FROM recipe_ingredients WHERE recipe_id = ? ORDER BY sort_order',
-            [id]
+            [recipeId]
         ),
         pool.query(
             'SELECT id, body, image_url FROM recipe_steps WHERE recipe_id = ? ORDER BY sort_order',
-            [id]
+            [recipeId]
         ),
-        listCommitsByRecipeId(id, 1)
+        listCommitsByRecipeId(recipeId, 1)
     ]);
 
     return { ...row, environment, ingredients, steps, latest_commit: commits[0] || null };
 }
 
 async function deleteRecipeById(recipeId, userId, commitMessage) {
-    const id = Number(recipeId);
     const connection = await pool.getConnection();
     try {
         await connection.beginTransaction();
 
-        await connection.execute('DELETE FROM recipe_environment WHERE recipe_id = ?', [id]);
-        await connection.execute('DELETE FROM recipe_ingredients WHERE recipe_id = ?', [id]);
-        await connection.execute('DELETE FROM recipe_steps WHERE recipe_id = ?', [id]);
+        await connection.execute('DELETE FROM recipe_environment WHERE recipe_id = ?', [recipeId]);
+        await connection.execute('DELETE FROM recipe_ingredients WHERE recipe_id = ?', [recipeId]);
+        await connection.execute('DELETE FROM recipe_steps WHERE recipe_id = ?', [recipeId]);
         await connection.execute(
             'DELETE FROM recipe_pull_requests WHERE target_recipe_id = ? OR source_recipe_id = ?',
-            [id, id]
+            [recipeId, recipeId]
         );
-        await connection.execute('DELETE FROM repos_information WHERE recipe_id = ?', [id]);
+        await connection.execute('DELETE FROM repos_information WHERE recipe_id = ?', [recipeId]);
 
         await connection.commit();
     } catch (error) {
@@ -384,11 +310,9 @@ async function deleteRecipeById(recipeId, userId, commitMessage) {
 
 // repos_information の本体列と子テーブル(environment/ingredients/steps)を、
 // 開いている connection の中でまとめて書き換える。updateRecipeById と
-// mergePullRequest の両方から使う（同じ書き換えを2箇所に書かないため）
+// mergePullRequest の両方から使う（同じ書き換えを2箇所に書かないため）。
+// recipe は recipeSchema を通った値か、同じ形に組み立てた既存のレシピ行
 async function applyRecipeUpdate(connection, recipeId, recipe) {
-    const normalizedRecipe = normalizeRecipeInput(recipe);
-    const id = Number(recipeId);
-
     await connection.execute(
         `UPDATE repos_information
          SET title = ?,
@@ -399,26 +323,27 @@ async function applyRecipeUpdate(connection, recipeId, recipe) {
              thumbnail = ?
          WHERE recipe_id = ?`,
         [
-            normalizedRecipe.title,
-            normalizedRecipe.description,
-            normalizedRecipe.defaultBranch,
-            Number(normalizedRecipe.isPrivate),
-            Number(normalizedRecipe.isDraft),
-            normalizedRecipe.thumbnail,
-            id
+            recipe.title,
+            recipe.description,
+            recipe.default_branch,
+            Number(recipe.is_private),
+            Number(recipe.is_draft),
+            recipe.thumbnail,
+            recipeId
         ]
     );
 
-    if (Array.isArray(recipe.environment)) {
-        await syncChildRows(connection, id, 'environment', normalizeEnvironment(recipe.environment));
+    // 省略された子テーブルは現状維持。[] が渡されたときだけ全削除になる
+    if (recipe.environment) {
+        await syncChildRows(connection, recipeId, 'environment', recipe.environment);
     }
 
-    if (Array.isArray(recipe.ingredients)) {
-        await syncChildRows(connection, id, 'ingredients', normalizeIngredients(recipe.ingredients));
+    if (recipe.ingredients) {
+        await syncChildRows(connection, recipeId, 'ingredients', recipe.ingredients);
     }
 
-    if (Array.isArray(recipe.steps)) {
-        await syncChildRows(connection, id, 'steps', normalizeSteps(recipe.steps));
+    if (recipe.steps) {
+        await syncChildRows(connection, recipeId, 'steps', recipe.steps);
     }
 }
 
@@ -444,7 +369,7 @@ async function updateRecipeById(recipeId, userId, recipe, commitMessage) {
 const PR_STATUS_MERGED = 1;
 
 async function getPullRequestById(prId) {
-    const [rows] = await pool.query('SELECT * FROM recipe_pull_requests WHERE id = ?', [Number(prId)]);
+    const [rows] = await pool.query('SELECT * FROM recipe_pull_requests WHERE id = ?', [prId]);
     return rows[0] || null;
 }
 
@@ -456,7 +381,7 @@ async function createPullRequest(sourceRecipeId, targetRecipeId, userId, pullReq
     const [result] = await pool.execute(
         `INSERT INTO recipe_pull_requests (source_recipe_id, target_recipe_id, user_id, title, content)
          VALUES (?, ?, ?, ?, ?)`,
-        [Number(sourceRecipeId), Number(targetRecipeId), Number(userId), title, content ?? null]
+        [sourceRecipeId, targetRecipeId, userId, title, content]
     );
 
     const created = await getPullRequestById(result.insertId);

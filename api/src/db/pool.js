@@ -1,17 +1,20 @@
-require('dotenv').config();
 const mysql = require('mysql2/promise');
+const config = require('../config');
 
 // Dolt は MySQL 互換プロトコルで喋るので、接続は mysql2 のプールをそのまま使う
 const pool = mysql.createPool({
-    host: process.env.DOLT_HOST || '127.0.0.1',
-    port: Number(process.env.DOLT_PORT || 3306),
-    user: process.env.DOLT_USER || 'cookhub',
-    password: process.env.DOLT_PASSWORD,
-    database: process.env.DOLT_DATABASE || 'cookhub',
+    host: config.DOLT_HOST,
+    port: config.DOLT_PORT,
+    user: config.DOLT_USER,
+    password: config.DOLT_PASSWORD,
+    database: config.DOLT_DATABASE,
     waitForConnections: true,
     connectionLimit: 10,
     // Dolt サーバーは UTC で時刻を持つので、ホストのタイムゾーンに関係なく UTC として解釈する
     timezone: 'Z',
+    // DECIMAL 列（材料の amount）を文字列ではなく数値で受け取る。
+    // 入力側は ingredientSchema が数値にしているので、出力もそれに揃える
+    decimalNumbers: true,
     // BOOLEAN 列を数値ではなく true/false で受け取る。
     // Dolt は TINYINT(1) でも表示幅を 1 として返さないため、幅では判定できない。
     // cookhub では真偽値の列を必ず is_ で始めているので名前で見分ける

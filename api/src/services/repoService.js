@@ -1,9 +1,11 @@
 const recipeDb = require('../db/repoDb');
-
-// fork_type はそのレシピの生まれ方を表す。
-// 0 = オリジナル（フォークではない）/ 1 = アレンジ / 2 = 移植（別の環境・人数に作り直したもの）
-const FORK_TYPE_ARRANGE = 1;
-const FORK_TYPE_PORT = 2;
+const {
+    FORK_TYPE_PORT,
+    recipeSchema,
+    forkTypeSchema,
+    pullRequestSchema,
+    mergeSchema
+} = require('../schemas/repoSchemas');
 
 // 閲覧者から見たリポジトリの権限（Gitea の repository.permissions に相当）。
 // row は recipeDb から返る素のDB行（recipe_id, title, user_id, username, ... 等の生カラム名）
@@ -108,35 +110,21 @@ function toDuplicateNameError(error) {
     return error;
 }
 
-// require* (権限確認) とは別物の入力チェック。誰がアクセスしているかは見ず、
-// payload に title/name が入っているかだけを見る。既定値の補完は recipeDb 側に任せる。
-// 戻り値はコミットメッセージに使う
-function resolveTitle(payload) {
-    const title = payload.title ?? payload.name;
-
-    if (!title) {
-        const err = new Error('title または name は必須です');
-        err.status = 400;
-        throw err;
-    }
-
-    return title;
-}
-
-async function saveRepo(userId, payload, message) {
+// recipe は recipeSchema を通した値、parentRecipeId はフォーク元のレシピID（オリジナルなら null）
+async function saveRepo(userId, recipe, parentRecipeId, message) {
     try {
-        const { commit, recipe } = await recipeDb.createRecipe(userId, payload, message);
-        return { ok: true, commit, data: toRepo(recipe, userId) };
+        const { commit, recipe: created } = await recipeDb.createRecipe(userId, recipe, parentRecipeId, message);
+        return { ok: true, commit, data: toRepo(created, userId) };
     } catch (error) {
         throw toDuplicateNameError(error);
     }
 }
 
 async function createRepository(ownerId, payload) {
-    const title = resolveTitle(payload);
-    const message = payload.commit_message || `レシピ作成: ${title}`;
+    const recipe = recipeSchema.parse(payload);
+    const message = recipe.commit_message || `レシピ作成: ${recipe.title}`;
 
-    return saveRepo(ownerId, payload, message);
+    return saveRepo(ownerId, recipe, null, message);
 }
 
 // 既存レシピを自分のレシピとして複製する（GitHub のフォーク相当の「アレンジする」）。
@@ -144,22 +132,22 @@ async function createRepository(ownerId, payload) {
 // 元レシピは parent_recipe_id に残るので、あとから派生をたどって家系図を作れる。
 async function forkCheckedRepository(userId, repoId, payload = {}) {
     const source = await requireViewableRepo(repoId, userId);
+    const forkType = forkTypeSchema.parse(payload.fork_type);
 
-    const forkType = Number(payload.fork_type ?? FORK_TYPE_ARRANGE);
-    if (forkType !== FORK_TYPE_ARRANGE && forkType !== FORK_TYPE_PORT) {
-        const err = new Error('fork_type は 1（アレンジ）か 2（移植）のどちらかです');
-        err.status = 400;
-        throw err;
-    }
+    // 元レシピの上に payload を重ねる。渡された項目だけが上書きされ、残りは引き継がれる。
+    // title は name でも送れるので、元レシピ名を上書きするかどうかもその両方で判断する
+    const recipe = recipeSchema.parse({
+        ...source,
+        ...payload,
+        title: payload.title ?? payload.name ?? source.title,
+        fork_type: forkType
+    });
 
-    // 元レシピの上に payload を重ねる。渡された項目だけが上書きされ、残りは引き継がれる
-    const merged = { ...source, ...payload, fork_type: forkType, parent_recipe_id: source.recipe_id };
-    const title = resolveTitle(merged);
     const kind = forkType === FORK_TYPE_PORT ? '移植' : 'アレンジ';
-    const message = payload.commit_message
-        || `レシピを${kind}: ${source.username}/${source.title} → ${title}`;
+    const message = recipe.commit_message
+        || `レシピを${kind}: ${source.username}/${source.title} → ${recipe.title}`;
 
-    return saveRepo(userId, merged, message);
+    return saveRepo(userId, recipe, source.recipe_id, message);
 }
 
 async function searchReposByStars(viewerId = null) {
@@ -203,9 +191,9 @@ async function getCheckedRepoCommit(repoId, commitId, viewerId = null) {
 async function updateCheckedRepository(userId, repoId, payload) {
     await requireAdministrableRepo(repoId, userId, '編集');
 
-    const title = resolveTitle(payload);
-    const message = payload.commit_message || `レシピ更新: ${title}`;
-    const { commit } = await recipeDb.updateRecipeById(repoId, userId, payload, message);
+    const recipe = recipeSchema.parse(payload);
+    const message = recipe.commit_message || `レシピ更新: ${recipe.title}`;
+    const { commit } = await recipeDb.updateRecipeById(repoId, userId, recipe, message);
 
     const updated = await recipeDb.getRecipeById(repoId);
     return { ok: true, commit, data: toRepo(updated, userId) };
@@ -230,16 +218,10 @@ async function createCheckedPullRequest(userId, repoId, payload = {}) {
 
     await requireViewableRepo(source.parent_recipe_id, userId);
 
-    const { title, content } = payload;
-    if (!title) {
-        const err = new Error('title は必須です');
-        err.status = 400;
-        throw err;
-    }
-
-    const message = payload.commit_message || `プルリクエスト作成: ${title}`;
+    const input = pullRequestSchema.parse(payload);
+    const message = input.commit_message || `プルリクエスト作成: ${input.title}`;
     const { commit, pullRequest } = await recipeDb.createPullRequest(
-        repoId, source.parent_recipe_id, userId, { title, content }, message
+        repoId, source.parent_recipe_id, userId, input, message
     );
 
     return { ok: true, commit, data: pullRequest };
@@ -248,6 +230,8 @@ async function createCheckedPullRequest(userId, repoId, payload = {}) {
 // PR をマージできるのは取り込まれる側（target = フォーク元）のオーナーだけ。
 // prId はレシピIDではないので、まず PR を引いて target_recipe_id を取り出してから権限を見る
 async function mergeCheckedPullRequest(userId, prId, payload = {}) {
+    const { commit_message } = mergeSchema.parse(payload);
+
     const target = await recipeDb.getPullRequestById(prId);
     if (!target) {
         const err = new Error('プルリクエストが見つかりません');
@@ -257,7 +241,7 @@ async function mergeCheckedPullRequest(userId, prId, payload = {}) {
 
     await requireAdministrableRepo(target.target_recipe_id, userId, 'マージ');
 
-    const message = payload.commit_message || `プルリクエストをマージ: ${target.title}`;
+    const message = commit_message || `プルリクエストをマージ: ${target.title}`;
     const { commit, pullRequest } = await recipeDb.mergePullRequest(prId, userId, message);
 
     return { ok: true, commit, data: pullRequest };
