@@ -61,7 +61,8 @@ function toRepo(row, viewerId = null) {
     return repo;
 }
 
-// Dolt のコミット1件を、フロントが受け取る形（Gitea のコミット表現）に整える
+// Dolt のコミット1件を、フロントが受け取る形（Gitea のコミット表現）に整える。
+// 日時のキーは Gitea の commit.author.date と同じく date（レシピ本体の created_at とは別物）
 function toCommit(row) {
     return {
         sha: row.commit_hash,
@@ -70,7 +71,7 @@ function toCommit(row) {
             username: row.committer,
             email: row.email
         },
-        created_at: row.date
+        date: row.date
     };
 }
 

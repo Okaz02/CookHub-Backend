@@ -313,6 +313,18 @@ Authorization: Bearer <token>
 - `200`: そのレシピに触れたコミットを新しい順に最大100件。材料や手順だけの変更も含む
 - `400` / `403` / `404`: 上と同じ
 
+コミット1件はこの形。`GET /api/repos/:id` の `latest_commit` も同じ。
+日時のキーはレシピ本体の `created_at` ではなく `date`。
+
+```json
+{
+  "sha": "vs1l2rrki3msk3vcbgn5pmcltab7kc7i",
+  "message": "レシピ更新: 肉じゃが",
+  "author": { "username": "tanaka", "email": "tanaka@example.com" },
+  "date": "2026-09-17T10:41:58.000Z"
+}
+```
+
 ### GET /api/repos/:id/commits/:commitId
 
 必要なもの: `GET /api/repos/:id` と同じ。`:commitId` は `GET /api/repos/:id/commits` の `sha`。
@@ -354,6 +366,12 @@ Authorization: Bearer <token>
 ボディは `POST /api/repos` と同じ形で、`title`（または `name`）は毎回必須。
 `environment` / `ingredients` / `steps` は**配列を渡したときだけ**丸ごと差し替えられる
 （省略すれば現状維持、`[]` を渡せば全削除）。
+
+子テーブルの各行には `GET /api/repos/:id` で返る `id` を付けて送れる。付けた行は
+その既存行の書き換えになり、付けなかった行は**配列の並び順**で既存行に当てはめられる
+（余った既存行は削除、足りないぶんは追加）。どちらの送り方でも、中身が変わっていない
+行は変更履歴の差分に出てこない。行の並べ替えだけをした場合は、動いた行が
+`modified` として差分に並ぶ。
 
 - `200`: 更新後のレシピ
 - `400`: `title`（または `name`）が無い / 型・長さがスキーマに合わない / `:id` が数値でない

@@ -84,7 +84,7 @@ const COMMIT_DIFF_STEPS = `
 const CHILD_TABLES = {
     environment: {
         values: (row) => [row.key_name, row.value],
-        selectIds: 'SELECT id FROM recipe_environment WHERE recipe_id = ?',
+        selectIds: 'SELECT id FROM recipe_environment WHERE recipe_id = ? ORDER BY sort_order, id',
         update: `UPDATE recipe_environment
                  SET sort_order = ?, key_name = ?, value = ?
                  WHERE id = ? AND recipe_id = ?`,
@@ -94,7 +94,7 @@ const CHILD_TABLES = {
     },
     ingredients: {
         values: (row) => [row.name, row.amount, row.unit],
-        selectIds: 'SELECT id FROM recipe_ingredients WHERE recipe_id = ?',
+        selectIds: 'SELECT id FROM recipe_ingredients WHERE recipe_id = ? ORDER BY sort_order, id',
         update: `UPDATE recipe_ingredients
                  SET sort_order = ?, name = ?, amount = ?, unit = ?
                  WHERE id = ? AND recipe_id = ?`,
@@ -104,7 +104,7 @@ const CHILD_TABLES = {
     },
     steps: {
         values: (row) => [row.body, row.image_url],
-        selectIds: 'SELECT id FROM recipe_steps WHERE recipe_id = ?',
+        selectIds: 'SELECT id FROM recipe_steps WHERE recipe_id = ? ORDER BY sort_order, id',
         update: `UPDATE recipe_steps
                  SET sort_order = ?, body = ?, image_url = ?
                  WHERE id = ? AND recipe_id = ?`,
@@ -114,23 +114,55 @@ const CHILD_TABLES = {
     }
 };
 
-async function syncChildRows(connection, recipeId, tableKey, rows) {
-    const child = CHILD_TABLES[tableKey];
-    const [existing] = await connection.query(child.selectIds, [recipeId]);
-    const existingIds = new Set(existing.map((row) => row.id));
-    const keptIds = new Set();
+// 送られてきた行を「既存のどの行を書き換えるか」に対応づける。戻り値は rows と同じ長さで、
+// 書き換える既存行の id か、新しく足す行なら null が並ぶ。
+// id が入っていればその行を使い、入っていなければ余っている既存行を上から順に使い回す。
+//
+// id 無しを一律 INSERT（＋既存を全部 DELETE）にしてしまうと、id を送ってこない
+// クライアントからの更新で、中身が1つも変わっていない材料や手順まで Dolt の差分に
+// 「削除」「追加」として並んでしまう。位置で拾い直せば、実際に変わった行だけが差分に出る
+function matchExistingRows(rows, existingIds) {
+    const available = new Set(existingIds);
 
-    for (let i = 0; i < rows.length; i += 1) {
-        const row = rows[i];
-        if (existingIds.has(row.id)) {
-            await connection.execute(child.update, [i, ...child.values(row), row.id, recipeId]);
-            keptIds.add(row.id);
-        } else {
-            await connection.execute(child.insert, [recipeId, i, ...child.values(row)]);
+    // id 指定のぶんを先に確保する。順番を逆にすると、位置で取った行が後ろの id 指定とぶつかる
+    const targetIds = rows.map((row) => {
+        if (row.id != null && available.has(row.id)) {
+            available.delete(row.id);
+            return row.id;
+        }
+        return null;
+    });
+
+    // 誰にも指定されなかった既存行を、id の無い行へ前から順に割り当てる（足りなければ新規行）
+    const spare = existingIds.filter((id) => available.has(id));
+    let spareIndex = 0;
+    for (let i = 0; i < targetIds.length; i += 1) {
+        if (targetIds[i] === null && spareIndex < spare.length) {
+            targetIds[i] = spare[spareIndex];
+            spareIndex += 1;
         }
     }
 
-    const removedIds = [...existingIds].filter((id) => !keptIds.has(id));
+    return targetIds;
+}
+
+async function syncChildRows(connection, recipeId, tableKey, rows) {
+    const child = CHILD_TABLES[tableKey];
+    const [existing] = await connection.query(child.selectIds, [recipeId]);
+    const existingIds = existing.map((row) => row.id);
+    const targetIds = matchExistingRows(rows, existingIds);
+
+    for (let i = 0; i < rows.length; i += 1) {
+        const targetId = targetIds[i];
+        if (targetId != null) {
+            await connection.execute(child.update, [i, ...child.values(rows[i]), targetId, recipeId]);
+        } else {
+            await connection.execute(child.insert, [recipeId, i, ...child.values(rows[i])]);
+        }
+    }
+
+    const keptIds = new Set(targetIds.filter((id) => id != null));
+    const removedIds = existingIds.filter((id) => !keptIds.has(id));
     if (removedIds.length > 0) {
         await connection.query(child.deleteIds, [removedIds]);
     }
@@ -364,6 +396,12 @@ async function updateRecipeById(recipeId, userId, recipe, commitMessage) {
     return { commit };
 }
 
+// 取り込む側の行の id は取り込まれる側の行を指していないので、そのまま渡すと
+// 無関係な行を書き換えてしまう。id を外して syncChildRows に位置で対応づけさせる
+function withoutRowIds(rows) {
+    return rows.map((row) => ({ ...row, id: null }));
+}
+
 // recipe_pull_requests.status のコード。0（デフォルト）が open で、それ以外は未定義だったので
 // マージ済みを表す値を決める
 const PR_STATUS_MERGED = 1;
@@ -410,9 +448,9 @@ async function mergePullRequest(prId, userId, commitMessage) {
     const mergedContent = {
         ...target,
         description: source.description,
-        environment: source.environment,
-        ingredients: source.ingredients,
-        steps: source.steps
+        environment: withoutRowIds(source.environment),
+        ingredients: withoutRowIds(source.ingredients),
+        steps: withoutRowIds(source.steps)
     };
 
     const connection = await pool.getConnection();
