@@ -1,8 +1,9 @@
 # cookhub
 
 Dolt（MySQL互換のバージョン管理データベース）を基盤とした、レシピのバージョン管理サービス。
-レシピを GitHubのリポジトリになぞらえて扱い、作成・編集・フォーク・プルリクエストの
-たびに Dolt のコミットとして履歴が残る。
+レシピ1件を git のリポジトリのように扱い、作成・編集・フォーク・プルリクエストの
+たびに Dolt のコミットとして履歴が残る。扱う対象はどの層でも一貫して**レシピ**と呼び、
+DBのテーブル名からAPIのパス・レスポンスのキー名まで `recipe` で統一している。
 
 ## 構成
 
@@ -25,20 +26,26 @@ cookhub/
 
 ### レイヤーごとの役割と語彙
 
-DBのテーブル・カラムは `recipe_id` / `repos_information` のように**レシピ**の語彙で、
-外部に公開するAPIは `repo` / `commit` / `fork` のように**リポジトリ**の語彙で書かれている。
-両者の翻訳は service 層の `toRepo()` / `toCommit()` に集約する。
+主役のエンティティは**レシピ**の1語で通す。DBの `recipes` / `recipe_id`、APIの
+`/api/recipes`、コード上の `recipeDb` / `recipeService` / `toRecipe()` / `recipeId` まで
+すべて同じ呼び方で、`repo` / `repository` という別名は使わない。
+APIのレスポンスのキー名もDBの列名に合わせてあるので、service層がやる変換は
+ネスト構造化（`owner`）・Boolean化・権限計算・派生値（`is_fork`）だけになる。
 
-| 層 | 語彙 | 責務 |
-| --- | --- | --- |
-| `db/` | recipe | 生の永続化操作のみ。権限チェックもレスポンス整形もしない |
-| `schemas/` | repo / commit | 受け付ける入力の型・必須・上限の定義。zod スキーマだけを置く |
-| `services/` | repo / commit | 権限判定、スキーマによる入力検証、DB行→APIレスポンスへの変換 |
-| `routes/` | repo / commit | HTTPの入出力のみ。`req.account?.user_id` を service に渡すだけ |
+一方 `commit` / `fork` / `branch` / `pull request` / `permissions.push` / `permissions.pull` は
+git の概念をそのまま借りた名前で、これは意図的に残している（レシピ管理をgitになぞらえる、
+というサービスの設計そのものなので、言い換えるとかえって分かりにくくなる）。
+
+| 層 | 責務 |
+| --- | --- |
+| `db/` | 生の永続化操作のみ。権限チェックもレスポンス整形もしない |
+| `schemas/` | 受け付ける入力の型・必須・上限の定義。zod スキーマだけを置く |
+| `services/` | 権限判定、スキーマによる入力検証、DB行→APIレスポンスへの変換 |
+| `routes/` | HTTPの入出力のみ。`req.account?.user_id` を service に渡すだけ |
 
 service層の関数名は、内部で権限チェックを行うものだけ `Checked` を含む
-（`getCheckedRepoDetail` / `updateCheckedRepository` など）。`require*`（`requireViewableRepo`,
-`requireAdministrableRepo`）は「権限が無ければ例外を投げる」という意味で統一している。
+（`getCheckedRecipeDetail` / `updateCheckedRecipe` など）。`require*`（`requireViewableRecipe`,
+`requireAdministrableRecipe`）は「権限が無ければ例外を投げる」という意味で統一している。
 
 ### 入力の検証
 
@@ -73,7 +80,7 @@ db層はこのスキーマを通った値しか受け取らないので、型の
 | ---------------------- | ---------------------------------------------------------------- |
 | `accounts`             | アカウント本体。パスワードは bcrypt ハッシュのみ保存する         |
 | `access_tokens`        | アクセストークン。SHA-256 ハッシュのみ保存する                   |
-| `repos_information`    | レシピ本体（`title`, `is_private`, `parent_recipe_id` など）     |
+| `recipes`              | レシピ本体（`title`, `is_private`, `parent_recipe_id` など）     |
 | `recipe_environment`   | 必須環境（調理器具・人数など）の key/value                       |
 | `recipe_ingredients`   | 材料                                                             |
 | `recipe_steps`         | 手順                                                             |
@@ -82,14 +89,24 @@ db層はこのスキーマを通った値しか受け取らないので、型の
 初期化スクリプトは外部キーの依存順に番号が振られており、上の表と同じ順で実行される。
 
 ```
+00_reset_tables.sql                   既存テーブルを依存の逆順で落とす
 01_init_accounts_table.sql            accounts
 02_init_access_tokens_table.sql       access_tokens
-03_init_repos_information_table.sql   repos_information
+03_init_recipes_table.sql             recipes
 04_init_recipe_environment.sql        recipe_environment
 05_init_recipe_ingredients.sql        recipe_ingredients
 06_init_recipe_steps.sql              recipe_steps
 07_init_recipe_pull_requests.sql      recipe_pull_requests
 99_dolt_commit.sql                    初期スキーマを Dolt にコミットする
+```
+
+`api/src/db/migrations/` は初回起動時には実行されない、手で流すためのスクリプト置き場。
+`recipes` テーブルは以前 `repos_information` という名前だったので、その頃に作ったDBを
+作り直さずに移行する場合だけ `01_rename_repos_information_to_recipes.sql` を流す。
+
+```bash
+docker compose exec -T dolt \
+  mysql -u cookhub -p"$COOKHUB_DB_PASSWORD" < api/src/db/migrations/01_rename_repos_information_to_recipes.sql
 ```
 
 ### Dolt のバージョン管理
@@ -100,7 +117,7 @@ db層はこのスキーマを通った値しか受け取らないので、型の
 ```sql
 SELECT commit_hash, author, message FROM dolt_log ORDER BY commit_order DESC;
 SELECT * FROM dolt_status;        -- 未コミットの変更
-SELECT * FROM dolt_diff('HEAD~1', 'HEAD', 'repos_information');
+SELECT * FROM dolt_diff('HEAD~1', 'HEAD', 'recipes');
 ```
 
 コミットが不要な場合は `api/.env` で `DOLT_AUTO_COMMIT=false` にする。コミットに失敗しても
@@ -110,7 +127,7 @@ APIのレスポンスは成功のまま（`commit` が `null` になる）、エ
 
 ### 1. インフラの起動
 
-リポジトリ直下に `.env` を用意する。
+プロジェクト直下に `.env` を用意する。
 
 ```env
 DOLT_ROOT_PASSWORD=xxxxx     # Dolt の root ユーザー (コンテナ内からのみ接続可)
@@ -175,17 +192,17 @@ Authorization: Bearer <token>
 | POST | `/api/accounts/register` | 不要 | 必須 `username` `email` `password` | アカウント作成 + トークン発行 |
 | POST | `/api/accounts/login` | 不要 | 必須 `username` `password` | ログイン + トークン発行 |
 | GET | `/api/accounts/session` | 必須 | なし | ログイン状態の確認 |
-| POST | `/api/repos` | 必須 | 必須 `title` | レシピ作成 |
-| GET | `/api/repos/mine` | 必須 | なし | 自分のレシピ一覧 |
-| GET | `/api/repos/trend` | 任意 | なし | 公開レシピ一覧 |
-| GET | `/api/repos/:id` | 任意 | なし | レシピ詳細 |
-| GET | `/api/repos/:id/commits` | 任意 | なし | 変更履歴の一覧 |
-| GET | `/api/repos/:id/commits/:commitId` | 任意 | なし | 変更履歴1件の詳細 |
-| POST | `/api/repos/:id/fork` | 必須 | 任意（全項目） | レシピを複製（アレンジ / 移植） |
-| PATCH | `/api/repos/:id` | 必須 | 必須 `title` | レシピ編集（オーナーのみ） |
-| DELETE | `/api/repos/:id` | 必須 | なし | レシピ削除（オーナーのみ） |
-| POST | `/api/repos/:id/pull-request/create` | 必須 | 必須 `title` | プルリクエスト作成（`:id` = 自分のフォーク） |
-| POST | `/api/repos/:id/pull-request/merge` | 必須 | 任意 `commit_message` のみ | プルリクエストのマージ（`:id` = **プルリクエストのID**） |
+| POST | `/api/recipes` | 必須 | 必須 `title` | レシピ作成 |
+| GET | `/api/recipes/mine` | 必須 | なし | 自分のレシピ一覧 |
+| GET | `/api/recipes/trend` | 任意 | なし | 公開レシピ一覧 |
+| GET | `/api/recipes/:id` | 任意 | なし | レシピ詳細 |
+| GET | `/api/recipes/:id/commits` | 任意 | なし | 変更履歴の一覧 |
+| GET | `/api/recipes/:id/commits/:commitId` | 任意 | なし | 変更履歴1件の詳細 |
+| POST | `/api/recipes/:id/fork` | 必須 | 任意（全項目） | レシピを複製（アレンジ / 移植） |
+| PATCH | `/api/recipes/:id` | 必須 | 任意（送った項目だけ更新） | レシピ編集（オーナーのみ） |
+| DELETE | `/api/recipes/:id` | 必須 | なし | レシピ削除（オーナーのみ） |
+| POST | `/api/recipes/:id/pull-request/create` | 必須 | 必須 `title` | プルリクエスト作成（`:id` = 自分のフォーク） |
+| POST | `/api/recipes/:id/pull-request/merge` | 必須 | 任意 `commit_message` のみ | プルリクエストのマージ（`:id` = **プルリクエストのID**） |
 
 `Content-Type: application/json` を付けてボディを送る場合、JSONとして壊れていると
 `400` になる（ボディを送らないときはヘッダーごと省略してよい）。
@@ -229,10 +246,10 @@ Authorization: Bearer <token>
 - `200`: アカウント情報
 - `401`: トークンが未指定または無効
 
-### POST /api/repos
+### POST /api/recipes
 
 必要なもの: **トークン**（作成者になる）＋ **ボディ**。
-ボディの必須項目は `title`（または `name`）だけで、他はすべて任意。
+ボディの必須項目は `title` だけで、他はすべて任意。
 
 ```json
 {
@@ -254,17 +271,17 @@ Authorization: Bearer <token>
 `unit` が50文字まで。`commit_message` は送るなら空文字以外。
 
 - `201`: `{ "ok": true, "commit": "<コミットハッシュ>", "data": {...} }`
-- `400`: `title`（または `name`）が無い / 型・長さがスキーマに合わない
+- `400`: `title` が無い / 型・長さがスキーマに合わない
 - `401`: トークンが未指定または無効
 - `409`: 同じ名前のレシピを既に持っている
 
-### GET /api/repos/mine
+### GET /api/recipes/mine
 
 必要なもの: **トークンのみ**（そのトークンの持ち主のレシピを返す）。ボディは読まれない。
 
 - `200`: `{ "ok": true, "data": [...] }` — 自分のレシピを作成日時の新しい順に返す（非公開も含む）
 
-### GET /api/repos/trend
+### GET /api/recipes/trend
 
 必要なもの: **なし**。トークンは任意で、付けると自分のレシピの
 `permissions.admin` が `true` になる（返る件数は変わらない）。
@@ -275,28 +292,31 @@ Authorization: Bearer <token>
 ```json
 {
   "id": 1,
-  "name": "肉じゃが",
-  "full_name": "tanaka/肉じゃが",
+  "title": "肉じゃが",
   "description": "定番の肉じゃが",
   "owner": { "user_id": 1, "username": "tanaka" },
-  "private": false,
-  "draft": false,
+  "is_private": false,
+  "is_draft": false,
   "thumbnail": null,
   "permissions": { "admin": false, "push": false, "pull": true },
   "default_branch": "main",
-  "fork": false,
+  "is_fork": false,
   "fork_type": 0,
-  "parent_id": null,
+  "parent_recipe_id": null,
   "stars_count": 0,
   "created_at": "2026-09-13T06:33:10.000Z",
   "updated_at": "2026-09-13T06:33:10.000Z"
 }
 ```
 
-`permissions` は閲覧者から見た権限で、`admin`（オーナーか）、`push`（= `admin`）、
-`pull`（公開レシピか、オーナー自身）を持つ。
+キー名はDBの列名と同じで、`is_fork`（`parent_recipe_id` があるか）だけが計算した値。
+「tanaka/肉じゃが」のような表示名を出したい場合は `owner.username` と `title` から
+クライアント側で組み立てる。
 
-### GET /api/repos/:id
+`permissions` は閲覧者から見た権限で、`admin`（オーナーか）、`push`（= `admin`、
+書き換えてよいか）、`pull`（公開レシピか、オーナー自身。中身を見てよいか）を持つ。
+
+### GET /api/recipes/:id
 
 必要なもの: 公開レシピなら**なし**。非公開レシピはオーナーのトークンが要る（無いと `403`）。
 
@@ -306,14 +326,14 @@ Authorization: Bearer <token>
 - `403`: 非公開レシピで、自分のものではない
 - `404`: レシピが無い
 
-### GET /api/repos/:id/commits
+### GET /api/recipes/:id/commits
 
-必要なもの: `GET /api/repos/:id` と同じ。
+必要なもの: `GET /api/recipes/:id` と同じ。
 
 - `200`: そのレシピに触れたコミットを新しい順に最大100件。材料や手順だけの変更も含む
 - `400` / `403` / `404`: 上と同じ
 
-コミット1件はこの形。`GET /api/repos/:id` の `latest_commit` も同じ。
+コミット1件はこの形。`GET /api/recipes/:id` の `latest_commit` も同じ。
 日時のキーはレシピ本体の `created_at` ではなく `date`。
 
 ```json
@@ -325,9 +345,9 @@ Authorization: Bearer <token>
 }
 ```
 
-### GET /api/repos/:id/commits/:commitId
+### GET /api/recipes/:id/commits/:commitId
 
-必要なもの: `GET /api/repos/:id` と同じ。`:commitId` は `GET /api/repos/:id/commits` の `sha`。
+必要なもの: `GET /api/recipes/:id` と同じ。`:commitId` は `GET /api/recipes/:id/commits` の `sha`。
 
 - `200`: コミット1件の詳細。`changes` にそのコミットで変わった内容が
   `info` / `environment` / `ingredients` / `steps` ごとに入り、各行は `diff_type`
@@ -335,7 +355,7 @@ Authorization: Bearer <token>
 - `403`: 非公開レシピで、自分のものではない
 - `404`: レシピまたはコミットが無い
 
-### POST /api/repos/:id/fork
+### POST /api/recipes/:id/fork
 
 必要なもの: **トークン**（複製したレシピのオーナーになる）。ボディは**任意**で丸ごと省略できる。
 `:id` は**複製したい元レシピ**のID。材料・手順・必須環境は
@@ -350,36 +370,36 @@ Authorization: Bearer <token>
 ```
 
 `fork_type` は `1` = アレンジ（デフォルト）、`2` = 移植（別の環境・人数に作り直したもの）。
-元レシピは `parent_recipe_id` に残るので、あとから派生をたどれる。レシピ名は `title` でも
-`name` でも指定でき、どちらも送らなければ元レシピと同じ名前になる。
+元レシピは `parent_recipe_id` に残るので、あとから派生をたどれる。`title` を送らなければ
+元レシピと同じ名前になる。
 
-- `201`: 複製されたレシピ。`fork: true` と派生元の `parent_id` が入る
+- `201`: 複製されたレシピ。`is_fork: true` と派生元の `parent_recipe_id` が入る
 - `400`: `fork_type` が 1 / 2 以外
 - `401`: トークンが未指定または無効
 - `403`: 非公開レシピで、自分のものではない
 - `404`: 元レシピが無い
 - `409`: 同じ名前のレシピを既に持っている（`title` を指定して複製する）
 
-### PATCH /api/repos/:id
+### PATCH /api/recipes/:id
 
 必要なもの: **オーナーのトークン**（他人のレシピは `403`）＋ **ボディ**。
-ボディは `POST /api/repos` と同じ形だが、**送られてきた項目だけ**が書き換わり、
+ボディは `POST /api/recipes` と同じ形だが、**送られてきた項目だけ**が書き換わり、
 省略した項目は現状維持になる（`title` も省略できる）。
 `environment` / `ingredients` / `steps` は**配列を渡したときだけ**丸ごと差し替えられる
 （省略すれば現状維持、`[]` を渡せば全削除）。
 
-子テーブルの各行には `GET /api/repos/:id` で返る `id` を付けて送れる。付けた行は
+子テーブルの各行には `GET /api/recipes/:id` で返る `id` を付けて送れる。付けた行は
 その既存行の書き換えになり、付けなかった行は**配列の並び順**で既存行に当てはめられる
 （余った既存行は削除、足りないぶんは追加）。どちらの送り方でも、中身が変わっていない
 行は変更履歴の差分に出てこない。行の並べ替えだけをした場合は、動いた行が
 `modified` として差分に並ぶ。
 
 - `200`: 更新後のレシピ
-- `400`: `title`（または `name`）が無い / 型・長さがスキーマに合わない / `:id` が数値でない
+- `400`: 型・長さがスキーマに合わない / `:id` が数値でない
 - `403`: 自分のレシピではない
 - `404`: レシピが無い
 
-### DELETE /api/repos/:id
+### DELETE /api/recipes/:id
 
 必要なもの: **オーナーのトークンのみ**（他人のレシピは `403`）。ボディは読まれない。
 材料・手順・必須環境・そのレシピが関わるプルリクエストも一緒に削除される。
@@ -388,7 +408,7 @@ Authorization: Bearer <token>
 - `403`: 自分のレシピではない
 - `404`: レシピが無い
 
-### POST /api/repos/:id/pull-request/create
+### POST /api/recipes/:id/pull-request/create
 
 `:id` は**自分のフォーク**（提案元）のレシピID。取り込み先はそのフォーク元
 （`parent_recipe_id`）が自動的に使われるので、ボディで指定する必要は無い。
@@ -432,7 +452,7 @@ Authorization: Bearer <token>
 - `403`: 指定したレシピが自分のものではない
 - `404`: レシピが無い
 
-### POST /api/repos/:id/pull-request/merge
+### POST /api/recipes/:id/pull-request/merge
 
 `:id` は**プルリクエストのID**（レシピIDではない）。`pull-request/create` のレスポンスの
 `data.id` を使う。PRの一覧取得APIはまだ無いので、この値は作成時に控えておく必要がある。

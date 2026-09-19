@@ -1,10 +1,10 @@
--- レシピ本体。Gitea のリポジトリに相当するメタデータを cookhub 側で保持し、
+-- レシピ本体。タイトル・公開設定といったレシピのメタデータを持ち、
 -- 材料・手順・必須環境は recipe_* テーブルにぶら下げる。
 -- 同じ人が同じ名前のレシピを2つ持てないよう (owner_id, title) に一意制約を張る
 -- （API はこの重複エラーを 409 に変換している）。
 USE cookhub;
 
-CREATE TABLE IF NOT EXISTS repos_information (
+CREATE TABLE IF NOT EXISTS recipes (
     recipe_id        INT          NOT NULL AUTO_INCREMENT,
     owner_id         INT          NOT NULL,
     parent_recipe_id INT          NULL,             -- フォーク元。オリジナルなら NULL
@@ -19,8 +19,8 @@ CREATE TABLE IF NOT EXISTS repos_information (
     created_at       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (recipe_id),
-    UNIQUE KEY uq_repos_owner_name (owner_id, title),
-    KEY idx_repos_created_at (created_at),
-    CONSTRAINT fk_repos_owner
+    UNIQUE KEY uq_recipes_owner_title (owner_id, title),
+    KEY idx_recipes_created_at (created_at),
+    CONSTRAINT fk_recipes_owner
         FOREIGN KEY (owner_id) REFERENCES accounts (user_id) ON DELETE CASCADE
 );

@@ -2,7 +2,7 @@ const { commitDolt } = require('../clients/doltClient');
 const { pool } = require('./pool');
 
 // レシピ取得の共通部分。呼び出し側で WHERE / ORDER BY / LIMIT を足して使う。
-// カラム名はDBのまま返し、repo語彙への翻訳はservice層のtoRepo()に任せる
+// カラム名はDBのまま返し、レスポンスの形への整形はservice層のtoRecipe()に任せる
 const RECIPE_SELECT = `
     SELECT r.recipe_id,
            r.title,
@@ -18,7 +18,7 @@ const RECIPE_SELECT = `
            r.updated_at,
            a.user_id,
            a.username
-    FROM repos_information r
+    FROM recipes r
     JOIN accounts a ON a.user_id = r.owner_id`;
 
 // あるレシピに触れたコミットの一覧。子テーブルだけの変更（材料の増減など）も
@@ -27,7 +27,7 @@ const COMMIT_LIST_SELECT = `
     SELECT l.commit_hash, l.message, l.committer, l.email, l.date
     FROM dolt_log l
     WHERE l.commit_hash IN (
-        SELECT to_commit FROM dolt_diff_repos_information        WHERE to_recipe_id = ? OR from_recipe_id = ?
+        SELECT to_commit FROM dolt_diff_recipes                  WHERE to_recipe_id = ? OR from_recipe_id = ?
         UNION SELECT to_commit FROM dolt_diff_recipe_environment WHERE to_recipe_id = ? OR from_recipe_id = ?
         UNION SELECT to_commit FROM dolt_diff_recipe_ingredients WHERE to_recipe_id = ? OR from_recipe_id = ?
         UNION SELECT to_commit FROM dolt_diff_recipe_steps       WHERE to_recipe_id = ? OR from_recipe_id = ?
@@ -43,14 +43,14 @@ const COMMIT_SELECT = `
 
 // そのコミットでレシピのどこが変わったか。Before/After を並べて表示するため、
 // 変更前（from_）と変更後（to_）の値を表示に使う列だけ取り出す
-const COMMIT_DIFF_REPO = `
+const COMMIT_DIFF_RECIPE = `
     SELECT diff_type,
            from_title, to_title,
            from_thumbnail, to_thumbnail,
            from_description, to_description,
            from_is_private, to_is_private,
            from_is_draft, to_is_draft
-    FROM dolt_diff_repos_information
+    FROM dolt_diff_recipes
     WHERE to_commit = ? AND (to_recipe_id = ? OR from_recipe_id = ?)`;
 
 const COMMIT_DIFF_ENVIRONMENT = `
@@ -168,7 +168,7 @@ async function syncChildRows(connection, recipeId, tableKey, rows) {
     }
 }
 
-// recipe は repoSchemas の recipeSchema を通った値。列の型・既定値の補完は済んでいる。
+// recipe は recipeSchemas の recipeSchema を通った値。列の型・既定値の補完は済んでいる。
 // parentRecipeId はフォーク元のレシピID（オリジナルなら null）
 async function createRecipe(ownerId, recipe, parentRecipeId, commitMessage) {
     const connection = await pool.getConnection();
@@ -176,7 +176,7 @@ async function createRecipe(ownerId, recipe, parentRecipeId, commitMessage) {
         await connection.beginTransaction();
 
         const [result] = await connection.execute(
-            `INSERT INTO repos_information (
+            `INSERT INTO recipes (
                 owner_id,
                 parent_recipe_id,
                 title,
@@ -278,7 +278,7 @@ async function getCommitByRecipeId(recipeId, commitHash) {
 
     const params = [commitHash, recipeId, recipeId];
     const [[info], [environment], [ingredients], [steps]] = await Promise.all([
-        pool.query(COMMIT_DIFF_REPO, params),
+        pool.query(COMMIT_DIFF_RECIPE, params),
         pool.query(COMMIT_DIFF_ENVIRONMENT, params),
         pool.query(COMMIT_DIFF_INGREDIENTS, params),
         pool.query(COMMIT_DIFF_STEPS, params)
@@ -326,7 +326,7 @@ async function deleteRecipeById(recipeId, userId, commitMessage) {
             'DELETE FROM recipe_pull_requests WHERE target_recipe_id = ? OR source_recipe_id = ?',
             [recipeId, recipeId]
         );
-        await connection.execute('DELETE FROM repos_information WHERE recipe_id = ?', [recipeId]);
+        await connection.execute('DELETE FROM recipes WHERE recipe_id = ?', [recipeId]);
 
         await connection.commit();
     } catch (error) {
@@ -340,13 +340,13 @@ async function deleteRecipeById(recipeId, userId, commitMessage) {
     return { commit };
 }
 
-// repos_information の本体列と子テーブル(environment/ingredients/steps)を、
+// recipes の本体列と子テーブル(environment/ingredients/steps)を、
 // 開いている connection の中でまとめて書き換える。updateRecipeById と
 // mergePullRequest の両方から使う（同じ書き換えを2箇所に書かないため）。
 // recipe は recipeSchema を通った値か、同じ形に組み立てた既存のレシピ行
 async function applyRecipeUpdate(connection, recipeId, recipe) {
     await connection.execute(
-        `UPDATE repos_information
+        `UPDATE recipes
          SET title = ?,
              description = ?,
              default_branch = ?,

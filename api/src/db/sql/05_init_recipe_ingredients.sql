@@ -14,5 +14,5 @@ CREATE TABLE IF NOT EXISTS recipe_ingredients (
     PRIMARY KEY (id),
     KEY idx_recipe_ingredients_recipe_id (recipe_id),
     CONSTRAINT fk_recipe_ingredients_recipe
-        FOREIGN KEY (recipe_id) REFERENCES repos_information (recipe_id)
+        FOREIGN KEY (recipe_id) REFERENCES recipes (recipe_id)
 );

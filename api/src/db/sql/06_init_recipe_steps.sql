@@ -1,4 +1,4 @@
--- レシピの手順（ステップ）。recipe_ingredients と同様に repos_information にぶら下がる。
+-- レシピの手順（ステップ）。recipe_ingredients と同様に recipes にぶら下がる。
 USE cookhub;
 
 CREATE TABLE IF NOT EXISTS recipe_steps (
@@ -9,6 +9,6 @@ CREATE TABLE IF NOT EXISTS recipe_steps (
     image_url     VARCHAR(255) NULL,
     created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (recipe_id) REFERENCES repos_information(recipe_id) ON DELETE CASCADE,
+    FOREIGN KEY (recipe_id) REFERENCES recipes(recipe_id) ON DELETE CASCADE,
     INDEX idx_recipe_id (recipe_id)
 );

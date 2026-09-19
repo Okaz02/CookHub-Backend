@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS recipe_pull_requests (
     INDEX idx_recipe_pull_requests_target_recipe_id (target_recipe_id),
     INDEX idx_recipe_pull_requests_source_recipe_id (source_recipe_id),
     INDEX idx_recipe_pull_requests_user_id (user_id),
-    FOREIGN KEY (target_recipe_id) REFERENCES repos_information(recipe_id) ON DELETE CASCADE,
-    FOREIGN KEY (source_recipe_id) REFERENCES repos_information(recipe_id) ON DELETE CASCADE,
+    FOREIGN KEY (target_recipe_id) REFERENCES recipes(recipe_id) ON DELETE CASCADE,
+    FOREIGN KEY (source_recipe_id) REFERENCES recipes(recipe_id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES accounts(user_id)
 );

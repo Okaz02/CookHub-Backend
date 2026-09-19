@@ -13,5 +13,5 @@ CREATE TABLE IF NOT EXISTS recipe_environment (
     PRIMARY KEY (id),
     KEY idx_recipe_environment_recipe_id (recipe_id),
     CONSTRAINT fk_recipe_environment_recipe
-        FOREIGN KEY (recipe_id) REFERENCES repos_information (recipe_id)
+        FOREIGN KEY (recipe_id) REFERENCES recipes (recipe_id)
 );
