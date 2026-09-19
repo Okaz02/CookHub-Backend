@@ -189,10 +189,32 @@ async function getCheckedRepoCommit(repoId, commitId, viewerId = null) {
     return { ok: true, data: { ...toCommit(row), changes: row.changes } };
 }
 
-async function updateCheckedRepository(userId, repoId, payload) {
-    await requireAdministrableRepo(repoId, userId, '編集');
+// PATCH は送られてきた項目だけを書き換える。recipeSchema は省略された項目に既定値
+// （description=null, is_private=false ...）を入れるので、既存の値を下敷きにしてから
+// 重ねないと、タイトルだけ直したつもりで説明が消えたり非公開レシピが公開されたりする。
+// 子テーブルは db 層が「省略＝現状維持」を見るので、ここでは重ねない
+function toRecipeInput(row) {
+    return {
+        title: row.title,
+        description: row.description,
+        default_branch: row.default_branch,
+        thumbnail: row.thumbnail,
+        is_private: row.is_private,
+        is_draft: row.is_draft,
+        fork_type: row.fork_type
+    };
+}
 
-    const recipe = recipeSchema.parse(payload);
+async function updateCheckedRepository(userId, repoId, payload = {}) {
+    const existing = await requireAdministrableRepo(repoId, userId, '編集');
+
+    // title は name でも送れるので、どちらも無いときだけ既存のタイトルを残す
+    const input = payload ?? {};
+    const recipe = recipeSchema.parse({
+        ...toRecipeInput(existing),
+        ...input,
+        title: input.title ?? input.name ?? existing.title
+    });
     const message = recipe.commit_message || `レシピ更新: ${recipe.title}`;
     const { commit } = await recipeDb.updateRecipeById(repoId, userId, recipe, message);
 

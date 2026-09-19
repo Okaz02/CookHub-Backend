@@ -363,7 +363,8 @@ Authorization: Bearer <token>
 ### PATCH /api/repos/:id
 
 必要なもの: **オーナーのトークン**（他人のレシピは `403`）＋ **ボディ**。
-ボディは `POST /api/repos` と同じ形で、`title`（または `name`）は毎回必須。
+ボディは `POST /api/repos` と同じ形だが、**送られてきた項目だけ**が書き換わり、
+省略した項目は現状維持になる（`title` も省略できる）。
 `environment` / `ingredients` / `steps` は**配列を渡したときだけ**丸ごと差し替えられる
 （省略すれば現状維持、`[]` を渡せば全削除）。
 
