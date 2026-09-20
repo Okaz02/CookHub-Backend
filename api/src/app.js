@@ -1,8 +1,8 @@
-// 設定の読み込みと zod の日本語化（下のエラーハンドラが返すメッセージ）を先に済ませる
+// 設定の読み込みとスキーマ検証の日本語化（下のエラーハンドラが返すメッセージ）を先に済ませる
 require('./config');
 const express = require('express');
 const cors = require('cors');
-const { z } = require('zod');
+const { ArkErrors } = require('arktype');
 
 const accountRoutes = require('./routes/accountRoutes');
 const recipeRoutes = require('./routes/recipeRoutes');
@@ -13,12 +13,20 @@ app.use(express.json());
 
 app.use('/api/recipes', recipeRoutes);
 
+// スキーマ検証で弾かれた項目の一覧を取り出す。検証のエラーは、スキーマを直接呼ぶ側
+// （ミドルウェア）からは ArkErrors がそのまま、.assert() を使う側（service 層）からは
+// TraversalError に包まれて渡ってくる。検証以外のエラーなら undefined
+function toSchemaIssues(error) {
+    return error instanceof ArkErrors ? error : error.arkErrors;
+}
+
 // eslint-disable-next-line no-unused-vars
 app.use((error, req, res, next) => {
     // 入力がスキーマに合わなかった場合。どの項目が駄目だったのかまで返す
-    if (error instanceof z.ZodError) {
-        const message = error.issues
-            .map((issue) => (issue.path.length > 0 ? `${issue.path.join('.')}: ${issue.message}` : issue.message))
+    const issues = toSchemaIssues(error);
+    if (issues) {
+        const message = issues
+            .map((issue) => (issue.path.length > 0 ? `${issue.propString}: ${issue.problem}` : issue.problem))
             .join(' / ');
         res.status(400).json({ error: message });
         return;

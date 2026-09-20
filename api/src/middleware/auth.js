@@ -1,3 +1,4 @@
+const { ArkErrors } = require('arktype');
 const { getAccountBySession } = require('../services/accountService');
 const { accessTokenSchema } = require('../schemas/accountSchemas');
 
@@ -8,8 +9,8 @@ function extractToken(req) {
 
 // 必須認証。トークンが無い/形が違う/無効なら 401 を返し、ルート本体には到達させない
 async function requireAuth(req, res, next) {
-    const token = accessTokenSchema.safeParse(extractToken(req));
-    if (!token.success) {
+    const token = accessTokenSchema(extractToken(req));
+    if (token instanceof ArkErrors) {
         const err = new Error('認証が必要です');
         err.status = 401;
         next(err);
@@ -17,7 +18,7 @@ async function requireAuth(req, res, next) {
     }
 
     try {
-        req.account = await getAccountBySession(token.data);
+        req.account = await getAccountBySession(token);
         next();
     } catch (error) {
         next(error);
@@ -34,8 +35,8 @@ async function optionalAuth(req, res, next) {
         return;
     }
 
-    const token = accessTokenSchema.safeParse(rawToken);
-    if (!token.success) {
+    const token = accessTokenSchema(rawToken);
+    if (token instanceof ArkErrors) {
         const err = new Error('トークンが無効です');
         err.status = 401;
         next(err);
@@ -43,7 +44,7 @@ async function optionalAuth(req, res, next) {
     }
 
     try {
-        req.account = await getAccountBySession(token.data);
+        req.account = await getAccountBySession(token);
         next();
     } catch (error) {
         next(error);

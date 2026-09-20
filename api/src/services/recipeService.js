@@ -123,7 +123,7 @@ async function saveRecipe(userId, recipe, parentRecipeId, message) {
 }
 
 async function createRecipe(ownerId, payload) {
-    const recipe = recipeSchema.parse(payload);
+    const recipe = recipeSchema.assert(payload);
     const message = recipe.commit_message || `レシピ作成: ${recipe.title}`;
 
     return saveRecipe(ownerId, recipe, null, message);
@@ -134,10 +134,10 @@ async function createRecipe(ownerId, payload) {
 // 元レシピは parent_recipe_id に残るので、あとから派生をたどって家系図を作れる。
 async function forkCheckedRecipe(userId, recipeId, payload = {}) {
     const source = await requireViewableRecipe(recipeId, userId);
-    const forkType = forkTypeSchema.parse(payload.fork_type);
+    const forkType = forkTypeSchema.assert(payload.fork_type);
 
     // 元レシピの上に payload を重ねる。渡された項目だけが上書きされ、残りは引き継がれる
-    const recipe = recipeSchema.parse({
+    const recipe = recipeSchema.assert({
         ...source,
         ...payload,
         title: payload.title ?? source.title,
@@ -209,7 +209,7 @@ async function updateCheckedRecipe(userId, recipeId, payload = {}) {
     const existing = await requireAdministrableRecipe(recipeId, userId, '編集');
 
     const input = payload ?? {};
-    const recipe = recipeSchema.parse({
+    const recipe = recipeSchema.assert({
         ...toRecipeInput(existing),
         ...input,
         title: input.title ?? existing.title
@@ -240,7 +240,7 @@ async function createCheckedPullRequest(userId, recipeId, payload = {}) {
 
     await requireViewableRecipe(source.parent_recipe_id, userId);
 
-    const input = pullRequestSchema.parse(payload);
+    const input = pullRequestSchema.assert(payload);
     const message = input.commit_message || `プルリクエスト作成: ${input.title}`;
     const { commit, pullRequest } = await recipeDb.createPullRequest(
         recipeId, source.parent_recipe_id, userId, input, message
@@ -252,7 +252,7 @@ async function createCheckedPullRequest(userId, recipeId, payload = {}) {
 // PR をマージできるのは取り込まれる側（target = フォーク元）のオーナーだけ。
 // prId はレシピIDではないので、まず PR を引いて target_recipe_id を取り出してから権限を見る
 async function mergeCheckedPullRequest(userId, prId, payload = {}) {
-    const { commit_message } = mergeSchema.parse(payload);
+    const { commit_message } = mergeSchema.assert(payload);
 
     const target = await recipeDb.getPullRequestById(prId);
     if (!target) {

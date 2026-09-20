@@ -29,7 +29,7 @@ async function issueAccessToken(account) {
 }
 
 async function registerAccount(payload) {
-    const { username, email, password } = registerSchema.parse(payload);
+    const { username, email, password } = registerSchema.assert(payload);
 
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
@@ -55,7 +55,7 @@ async function registerAccount(payload) {
 }
 
 async function loginAccount(payload) {
-    const { username, password } = loginSchema.parse(payload);
+    const { username, password } = loginSchema.assert(payload);
 
     const credentials = await getAccountCredentialsByUsername(username);
     const passwordMatched = credentials
