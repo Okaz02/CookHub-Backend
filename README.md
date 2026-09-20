@@ -101,13 +101,24 @@ db層はこのスキーマを通った値しか受け取らないので、型の
 ```
 
 `api/src/db/migrations/` は初回起動時には実行されない、手で流すためのスクリプト置き場。
-`recipes` テーブルは以前 `repos_information` という名前だったので、その頃に作ったDBを
-作り直さずに移行する場合だけ `01_rename_repos_information_to_recipes.sql` を流す。
+既にデータが入っているDBを作り直さずに移行するときだけ、番号順に流す。
+
+| ファイル | 内容 |
+| --- | --- |
+| `01_rename_repos_information_to_recipes.sql` | `recipes` テーブルの旧名 `repos_information` からの改名 |
+| `02_trim_existing_text_values.sql` | 既存データの前後の空白を除去（`01` のあとに流す） |
+
+Dolt のイメージには `mysql` クライアントが入っていないので、コンテナ内の `dolt` CLI に
+標準入力から流し込む。
 
 ```bash
-docker compose exec -T dolt \
-  mysql -u cookhub -p"$COOKHUB_DB_PASSWORD" < api/src/db/migrations/01_rename_repos_information_to_recipes.sql
+for f in api/src/db/migrations/*.sql; do
+  podman exec -i -w /var/lib/dolt dolt dolt sql < "$f"
+done
 ```
+
+流したあとはAPIサーバーの再起動が要る。起動中のプロセスは改名前のコードを読み込んだ
+ままなので、SQLを流しただけでは新しいテーブル名を見に行かない。
 
 ### Dolt のバージョン管理
 

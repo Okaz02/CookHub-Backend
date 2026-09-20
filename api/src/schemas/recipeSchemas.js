@@ -12,16 +12,20 @@ function requiredError(issue) {
 }
 
 // 文字数の上限は DB の列定義（api/src/db/sql/）に合わせる。
-// 超えた値は Dolt 側で黙って切り捨てられてしまうので、その手前で弾く
-const requiredNameSchema = z.string({ error: requiredError }).min(1, '必須です').max(255); // VARCHAR(255) NOT NULL
-const optionalNameSchema = z.string().max(255).nullable().default(null);                  // VARCHAR(255) NULL
-const optionalTextSchema = z.string().nullable().default(null);                           // TEXT NULL
+// 超えた値は Dolt 側で黙って切り捨てられてしまうので、その手前で弾く。
+//
+// 前後の空白は必ず落としてから保存する。落とさないと「 少々」と「少々」が別の値として
+// DBに入り、見た目が同じなのに変更履歴に「 少々 → 少々」という差分が出てしまう。
+// .trim() は .min() / .max() より先に置く（トリム後の長さで判定させるため）
+const requiredNameSchema = z.string({ error: requiredError }).trim().min(1, '必須です').max(255); // VARCHAR(255) NOT NULL
+const optionalNameSchema = z.string().trim().max(255).nullable().default(null);                  // VARCHAR(255) NULL
+const optionalTextSchema = z.string().trim().nullable().default(null);                           // TEXT NULL
 
 // 子テーブルの行の id。更新時に「残す既存行」を指し、新しく足す行では null
 const childIdSchema = z.coerce.number().int().positive().nullable().default(null);
 
 // Dolt のコミットメッセージ。省略時の既定値は service 層が組み立てる
-const commitMessageSchema = z.string().min(1).optional();
+const commitMessageSchema = z.string().trim().min(1).optional();
 
 // 必須環境（recipe_environment）の1行
 const environmentSchema = z.object({
@@ -36,13 +40,13 @@ const ingredientSchema = z.object({
     id: childIdSchema,
     name: requiredNameSchema,
     amount: z.coerce.number().max(99999999.99).nullable().default(null),
-    unit: z.string().max(50).nullable().default(null)
+    unit: z.string().trim().max(50).nullable().default(null)
 });
 
 // 手順（recipe_steps）の1行
 const stepSchema = z.object({
     id: childIdSchema,
-    body: z.string({ error: requiredError }).min(1, '必須です'),
+    body: z.string({ error: requiredError }).trim().min(1, '必須です'),
     image_url: optionalNameSchema
 });
 
@@ -54,7 +58,7 @@ const stepSchema = z.object({
 const recipeSchema = z.object({
     title: requiredNameSchema,
     description: optionalTextSchema,
-    default_branch: z.string().min(1).max(255).default('main'),
+    default_branch: z.string().trim().min(1).max(255).default('main'),
     thumbnail: optionalNameSchema,
     is_private: z.boolean().default(false),
     is_draft: z.boolean().default(false),
