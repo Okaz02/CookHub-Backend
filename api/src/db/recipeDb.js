@@ -184,8 +184,7 @@ async function createRecipe(ownerId, recipe, parentRecipeId, commitMessage) {
                 description,
                 default_branch,
                 stars_count,
-                is_private,
-                is_draft,
+                status,
                 fork_type
             ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
             [
@@ -195,8 +194,7 @@ async function createRecipe(ownerId, recipe, parentRecipeId, commitMessage) {
                 recipe.thumbnail,
                 recipe.description,
                 recipe.default_branch,
-                Number(recipe.is_private),
-                Number(recipe.is_draft),
+                recipe.status,
                 recipe.fork_type
             ]
         );
@@ -476,6 +474,14 @@ async function mergePullRequest(prId, userId, commitMessage) {
     await commitDolt(`プルリクエストをマージ済みとして記録: #${pullRequest.id}`, userId);
 
     return { commit, pullRequest: await getPullRequestById(pullRequest.id) };
+}
+
+async function createIssue(targetRecipeId) {
+    const [rows] = await pool.execute(
+        'SELECT * FROM recipe_pull_requests WHERE target_recipe_id = ?',
+        [targetRecipeId]
+    );
+    return rows;
 }
 
 module.exports = {

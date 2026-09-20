@@ -11,7 +11,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-app.use('/api/accounts', accountRoutes);
 app.use('/api/recipes', recipeRoutes);
 
 // eslint-disable-next-line no-unused-vars
