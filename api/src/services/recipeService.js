@@ -1,7 +1,5 @@
 const recipeDb = require('../db/recipeDb');
 const {
-    FORK_TYPE_PORT,
-    RECIPE_STATUS_PUBLIC,
     recipeSchema,
     forkTypeSchema,
     pullRequestSchema,
@@ -17,7 +15,7 @@ function toPermissions(row, viewerId) {
     return {
         admin,
         push: admin,
-        pull: admin || row.recipe_status === RECIPE_STATUS_PUBLIC
+        pull: admin || row.recipe_status === 'public'
     };
 }
 
@@ -139,7 +137,7 @@ async function forkCheckedRecipe(userId, recipeId, payload = {}) {
         fork_type: forkType
     });
 
-    const kind = forkType === FORK_TYPE_PORT ? '移植' : 'アレンジ';
+    const kind = recipe.fork_type === 'port' ? '移植' : 'アレンジ';
     const message = recipe.commit_message
         || `レシピを${kind}: ${source.username}/${source.title} → ${recipe.title}`;
 

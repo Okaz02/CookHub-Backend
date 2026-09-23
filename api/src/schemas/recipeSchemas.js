@@ -1,36 +1,7 @@
 const { type } = require('arktype');
 
-// fork_type はそのレシピの生まれ方を表す。recipes.fork_type の ENUM と同じ名前で、
-// APIのリクエスト・レスポンスもこの名前のまま扱う（DBとAPIで呼び方を変えない）
-const FORK_TYPE_ORIGINAL = 'original';
-const FORK_TYPE_ARRANGE = 'arrange';
-const FORK_TYPE_PORT = 'port'; // 別の環境・人数に作り直したもの
-const FORK_TYPES = [FORK_TYPE_ORIGINAL, FORK_TYPE_ARRANGE, FORK_TYPE_PORT];
-
-const RECIPE_STATUS_PUBLIC = 'public';
-const RECIPE_STATUS_PRIVATE = 'private';
-const RECIPE_STATUS_PUBLIC_DRAFT = 'public_draft';
-const RECIPE_STATUS_PRIVATE_DRAFT = 'private_draft';
-const RECIPE_STATUSES = [
-    RECIPE_STATUS_PUBLIC,
-    RECIPE_STATUS_PRIVATE,
-    RECIPE_STATUS_PUBLIC_DRAFT,
-    RECIPE_STATUS_PRIVATE_DRAFT
-];
-
-// 弾いたときにどれを指しているのかが分かるように、エラーメッセージでは名前に訳を添える
-const forkTypeLabels = {
-    [FORK_TYPE_ORIGINAL]: 'original（オリジナル）',
-    [FORK_TYPE_ARRANGE]: 'arrange（アレンジ）',
-    [FORK_TYPE_PORT]: 'port（移植）'
-};
-
-// 文字列は必ず前後の空白を落としてから保存する。落とさないと「 少々」と「少々」が別の値として
-// DBに入り、見た目が同じなのに変更履歴に「 少々 → 少々」という差分が出てしまう。
-// 空白しか入っていない値は「未入力」として null にそろえる。'' のまま通すと「値なし」が
-// null と '' の2通りでDBに入り、変更履歴に「少々 →（空）」のような中身の無い差分が出る。
-// 数値の項目では '' がそのまま 0 に化けてしまう（「少々」が「0g」になる）ので、
-// 数値に読み替えるより先にここで落としておく必要がある
+// 空白や '' を null にそろえないと、変更履歴に中身の無い差分が出る。
+// 数値の項目では '' が 0 に化けるので、数値に読み替えるより先に通す
 const trimToNull = (value) => {
     if (typeof value !== 'string') {
         return value;
@@ -127,9 +98,8 @@ const commitHash = () => {
 // arktype の .default() はオブジェクトの項目にしか使えないので、単体で使う forkTypeSchema の
 // 省略時の値はこの読み替えが決める（項目として使うときは .default() も併せて付ける）
 const forkType = (allowed, fallback) => {
-    const labels = allowed.map((kind) => forkTypeLabels[kind]).join('か');
-    const kinds = type('undefined').pipe(() => fallback).or(type.enumerated(...allowed));
-    return kinds.configure(mustBe(`${labels}のどれか`), 'union');
+        const kinds = type('undefined').pipe(() => fallback).or(type.enumerated(...allowed));
+    return kinds.configure(mustBe(`${allowed.join('か')}のどれか`), 'union');
 };
 
 // --- 各テーブルの入力 -------------------------------------------------------
@@ -165,8 +135,8 @@ const recipeSchema = type({
     description: optionalText(),
     default_branch: branchName(),
     thumbnail: optionalText(255),
-    recipe_status: type.enumerated(...RECIPE_STATUSES).default(RECIPE_STATUS_PUBLIC),
-    fork_type: forkType(FORK_TYPES, FORK_TYPE_ORIGINAL).default(FORK_TYPE_ORIGINAL),
+    recipe_status: type.enumerated('public', 'private', 'public_draft', 'private_draft').default('public'),
+    fork_type: forkType(['original', 'arrange', 'port'], 'original').default('original'), // port = 別の環境・人数に作り直したもの
     environment: rows(environmentSchema),
     ingredients: rows(ingredientSchema),
     steps: rows(stepSchema),
@@ -174,7 +144,7 @@ const recipeSchema = type({
 });
 
 // フォークで作られるレシピは original にはならない。省略時はアレンジ
-const forkTypeSchema = forkType([FORK_TYPE_ARRANGE, FORK_TYPE_PORT], FORK_TYPE_ARRANGE);
+const forkTypeSchema = forkType(['arrange', 'port'], 'arrange');
 
 // プルリクエスト（recipe_pull_requests）作成のボディ
 const pullRequestSchema = type({
@@ -197,11 +167,6 @@ const commitParamsSchema = recipeParamsSchema.merge({
 });
 
 module.exports = {
-    FORK_TYPE_PORT,
-    RECIPE_STATUS_PUBLIC,
-    RECIPE_STATUS_PRIVATE,
-    RECIPE_STATUS_PUBLIC_DRAFT,
-    RECIPE_STATUS_PRIVATE_DRAFT,
     recipeSchema,
     forkTypeSchema,
     pullRequestSchema,
