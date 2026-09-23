@@ -18,7 +18,9 @@ const pool = mysql.createPool({
     // BOOLEAN 列を数値ではなく true/false で受け取る。
     // Dolt は TINYINT(1) でも表示幅を 1 として返さないため、幅では判定できない。
     // cookhub では真偽値の列を必ず is_ で始めているので名前で見分ける
-    // （fork_type のように 0/1 以外を取る TINYINT まで true/false にしないため）。
+    // （真偽値ではない TINYINT 列まで true/false にしないため）。
+    // 選択肢が決まっている列（fork_type / プルリクエストの status）は番号ではなく
+    // ENUM で持っているので、ここを通らずそのまま名前の文字列で返る。
     typeCast: (field, next) => {
         if (field.type === 'TINY' && /(^|_)is_/.test(field.name)) {
             const value = field.string();

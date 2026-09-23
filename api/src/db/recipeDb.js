@@ -184,7 +184,8 @@ async function createRecipe(ownerId, recipe, parentRecipeId, commitMessage) {
                 description,
                 default_branch,
                 stars_count,
-                status,
+                is_private,
+                is_draft,
                 fork_type
             ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
             [
@@ -194,7 +195,8 @@ async function createRecipe(ownerId, recipe, parentRecipeId, commitMessage) {
                 recipe.thumbnail,
                 recipe.description,
                 recipe.default_branch,
-                recipe.status,
+                Number(recipe.is_private),
+                Number(recipe.is_draft),
                 recipe.fork_type
             ]
         );
@@ -400,9 +402,9 @@ function withoutRowIds(rows) {
     return rows.map((row) => ({ ...row, id: null }));
 }
 
-// recipe_pull_requests.status のコード。0（デフォルト）が open で、それ以外は未定義だったので
-// マージ済みを表す値を決める
-const PR_STATUS_MERGED = 1;
+// recipe_pull_requests.status の ENUM のうち、マージ済みを表す値
+// （作成時は列の既定値の 'open' が入る）
+const PR_STATUS_MERGED = 'merged';
 
 async function getPullRequestById(prId) {
     const [rows] = await pool.query('SELECT * FROM recipe_pull_requests WHERE id = ?', [prId]);

@@ -17,7 +17,7 @@ app.use('/api/recipes', recipeRoutes);
 // （ミドルウェア）からは ArkErrors がそのまま、.assert() を使う側（service 層）からは
 // TraversalError に包まれて渡ってくる。検証以外のエラーなら undefined
 function toSchemaIssues(error) {
-    return error instanceof ArkErrors ? error : error.arkErrors;
+    return error instanceof ArkErrors ? error : error?.arkErrors;
 }
 
 // eslint-disable-next-line no-unused-vars

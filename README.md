@@ -18,7 +18,7 @@ cookhub/
         ├── config.js         # .env の読み込みと検証
         ├── routes/           # HTTPルーティング
         ├── middleware/       # 認証・パラメータ検証・非同期ラッパー
-        ├── schemas/          # zod による入力スキーマ（型・必須・上限の定義）
+        ├── schemas/          # ArkType による入力スキーマ（型・必須・上限の定義）
         ├── services/         # ビジネスロジック（権限判定・レスポンス整形）
         ├── clients/          # Dolt のバージョン管理操作
         └── db/               # Dolt への接続・クエリ・スキーマ定義
@@ -39,7 +39,7 @@ git の概念をそのまま借りた名前で、これは意図的に残して�
 | 層 | 責務 |
 | --- | --- |
 | `db/` | 生の永続化操作のみ。権限チェックもレスポンス整形もしない |
-| `schemas/` | 受け付ける入力の型・必須・上限の定義。zod スキーマだけを置く |
+| `schemas/` | 受け付ける入力の型・必須・上限の定義。ArkType のスキーマだけを置く |
 | `services/` | 権限判定、スキーマによる入力検証、DB行→APIレスポンスへの変換 |
 | `routes/` | HTTPの入出力のみ。`req.account?.user_id` を service に渡すだけ |
 
@@ -47,9 +47,24 @@ service層の関数名は、内部で権限チェックを行うものだけ `Ch
 （`getCheckedRecipeDetail` / `updateCheckedRecipe` など）。`require*`（`requireViewableRecipe`,
 `requireAdministrableRecipe`）は「権限が無ければ例外を投げる」という意味で統一している。
 
+### 選択肢が決まっている値
+
+取りうる値があらかじめ決まっている列は、番号ではなくDBの `ENUM` で名前のまま持つ。
+番号で持つと `fork_type = 2` が何を指すのか列を見ても分からず、範囲外の値もDBが
+受け付けてしまうため。名前はDB・スキーマ・APIのレスポンスで共通で、層をまたいでも
+読み替えない（レシピを1語で通すのと同じ方針）。
+
+| 列 | 値 |
+| --- | --- |
+| `recipes.fork_type` | `original`（フォークではない）/ `arrange`（アレンジ）/ `port`（移植） |
+| `recipe_pull_requests.status` | `open`（提案中）/ `merged`（取り込み済み） |
+
+真偽値だけは例外で、`is_private` / `is_draft` / `is_active` のように `is_` で始まる
+`BOOLEAN` の列にする（`mysql2` の `typeCast` がこの名前を見て `true` / `false` に直す）。
+
 ### 入力の検証
 
-外から来る値はすべて `api/src/schemas/` の zod スキーマを通してから処理に入る。スキーマは
+外から来る値はすべて `api/src/schemas/` の ArkType スキーマを通してから処理に入る。スキーマは
 DBの列定義（型・NOT NULL・`VARCHAR` の長さ）をそのまま写したもので、既定値の補完も兼ねる。
 db層はこのスキーマを通った値しか受け取らないので、型の整形や既定値の補完をしない。
 
@@ -107,6 +122,8 @@ db層はこのスキーマを通った値しか受け取らないので、型の
 | --- | --- |
 | `01_rename_repos_information_to_recipes.sql` | `recipes` テーブルの旧名 `repos_information` からの改名 |
 | `02_trim_existing_text_values.sql` | 既存データの前後の空白を除去（`01` のあとに流す） |
+| `03_empty_text_to_null.sql` | 空文字で入っていた「値なし」を `NULL` にそろえる（`02` のあとに流す） |
+| `04_fork_type_and_pr_status_to_enum.sql` | `recipes.fork_type` と `recipe_pull_requests.status` を番号から `ENUM` に変更 |
 
 Dolt のイメージには `mysql` クライアントが入っていないので、コンテナ内の `dolt` CLI に
 標準入力から流し込む。
@@ -312,7 +329,7 @@ Authorization: Bearer <token>
   "permissions": { "admin": false, "push": false, "pull": true },
   "default_branch": "main",
   "is_fork": false,
-  "fork_type": 0,
+  "fork_type": "original",
   "parent_recipe_id": null,
   "stars_count": 0,
   "created_at": "2026-09-13T06:33:10.000Z",
@@ -374,18 +391,18 @@ Authorization: Bearer <token>
 
 ```json
 {
-  "fork_type": 1,
+  "fork_type": "arrange",
   "title": "肉じゃが（砂糖ひかえめ）",
   "ingredients": [{ "name": "砂糖", "amount": 10, "unit": "g" }]
 }
 ```
 
-`fork_type` は `1` = アレンジ（デフォルト）、`2` = 移植（別の環境・人数に作り直したもの）。
+`fork_type` は `"arrange"` = アレンジ（デフォルト）、`"port"` = 移植（別の環境・人数に作り直したもの）。
 元レシピは `parent_recipe_id` に残るので、あとから派生をたどれる。`title` を送らなければ
 元レシピと同じ名前になる。
 
 - `201`: 複製されたレシピ。`is_fork: true` と派生元の `parent_recipe_id` が入る
-- `400`: `fork_type` が 1 / 2 以外
+- `400`: `fork_type` が `"arrange"` / `"port"` 以外
 - `401`: トークンが未指定または無効
 - `403`: 非公開レシピで、自分のものではない
 - `404`: 元レシピが無い
@@ -449,7 +466,7 @@ Authorization: Bearer <token>
     "user_id": 5,
     "title": "砂糖を減らしたい",
     "content": "10g だと甘すぎたので 5g にしました",
-    "status": 0,
+    "status": "open",
     "merged_commit_hash": null,
     "created_at": "2026-09-17T10:41:58.000Z",
     "updated_at": "2026-09-17T10:41:58.000Z",
@@ -479,7 +496,7 @@ Authorization: Bearer <token>
 （取り込み先の既存の材料・手順は置き換えられる）。タイトル・公開設定・サムネイルなど
 取り込み先自身の属性は変わらない。提案元のレシピはそのまま残る。
 
-- `200`: マージ後のプルリクエスト。`status` が `1`、`merged_at` と
+- `200`: マージ後のプルリクエスト。`status` が `"merged"`、`merged_at` と
   `merged_commit_hash` が埋まる
 - `400`: `:id` が数値でない
 - `401`: トークンが未指定または無効

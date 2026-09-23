@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS recipe_pull_requests (
     user_id             INT          NOT NULL,
     title               VARCHAR(255) NOT NULL,
     content             TEXT         NULL,
-    status              TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    -- open = 提案中 / merged = 取り込み済み（クローズは未実装）
+    status              ENUM('open', 'merged') NOT NULL DEFAULT 'open',
     merged_commit_hash  VARCHAR(40)  NULL,
     created_at          TIMESTAMP    NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at          TIMESTAMP    NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

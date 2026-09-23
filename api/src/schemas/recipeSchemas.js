@@ -1,16 +1,17 @@
 const { type } = require('arktype');
 
-// fork_type はそのレシピの生まれ方を表す。
-// 0 = オリジナル（フォークではない）/ 1 = アレンジ / 2 = 移植（別の環境・人数に作り直したもの）
-const FORK_TYPE_ORIGINAL = 0;
-const FORK_TYPE_ARRANGE = 1;
-const FORK_TYPE_PORT = 2;
+// fork_type はそのレシピの生まれ方を表す。recipes.fork_type の ENUM と同じ名前で、
+// APIのリクエスト・レスポンスもこの名前のまま扱う（DBとAPIで呼び方を変えない）
+const FORK_TYPE_ORIGINAL = 'original'; // フォークではない
+const FORK_TYPE_ARRANGE = 'arrange';   // アレンジ
+const FORK_TYPE_PORT = 'port';         // 移植（別の環境・人数に作り直したもの）
+const FORK_TYPES = [FORK_TYPE_ORIGINAL, FORK_TYPE_ARRANGE, FORK_TYPE_PORT];
 
-// 弾いたときにどれを指しているのかが分かるように、エラーメッセージでは番号に呼び名を添える
+// 弾いたときにどれを指しているのかが分かるように、エラーメッセージでは名前に訳を添える
 const forkTypeLabels = {
-    [FORK_TYPE_ORIGINAL]: '0（オリジナル）',
-    [FORK_TYPE_ARRANGE]: '1（アレンジ）',
-    [FORK_TYPE_PORT]: '2（移植）'
+    [FORK_TYPE_ORIGINAL]: 'original（オリジナル）',
+    [FORK_TYPE_ARRANGE]: 'arrange（アレンジ）',
+    [FORK_TYPE_PORT]: 'port（移植）'
 };
 
 // 文字列は必ず前後の空白を落としてから保存する。落とさないと「 少々」と「少々」が別の値として
@@ -30,6 +31,13 @@ const trimToNull = (value) => {
 
 // NULL 可の列の「未入力」
 const noValue = type('null').describe('未入力');
+
+// 受け付けない型（文字列の項目に数値が来た等）を弾いたときの文言。
+// 「文字列 か 未入力 のどちらか」のような選択肢の言い換えは読みにくいので、
+// 選択肢をまとめている型（union）にだけ、その列が何の値なのかを一言で付け直す
+const mustBe = (name) => {
+    return { problem: () => `${name}で指定してください` };
+};
 
 // --- 列の形ごとのスキーマ ---------------------------------------------------
 // 型を1つずつ書き下すと、その項目が結局どういう値を受け付けるのかが読み取りにくい。
@@ -51,43 +59,53 @@ const requiredText = (max) => {
 const optionalText = (max) => {
     const length = max === undefined ? 'string' : `string <= ${max}`;
     const text = type(length).describe('文字列').or(noValue);
-    return type('string | null').pipe(trimToNull).to(text).default(null);
+    return type('string | null').pipe(trimToNull).to(text).configure(mustBe('文字列'), 'union').default(null);
+};
+
+// フォームから来る文字列（'2.5'）や URL の :id を数値に読み替える。
+// 桁数・範囲・整数かどうかは読み替えたあとの数値で見る。読み替えと一緒に見ると、
+// 弾いた理由が「数値ではない」に丸められて、いくつまでなのかが伝わらなくなる
+const toNumber = (value, ctx) => {
+    if (typeof value !== 'string') {
+        return value;
+    }
+
+    const number = Number(value);
+    return Number.isNaN(number) ? ctx.error('数値') : number;
 };
 
 // NULL 可の数値。フォームから来る文字列（'2.5'）も数値として受け付ける
 const optionalNumber = (max) => {
-    const amount = type(`number <= ${max}`).describe('数値');
-    const number = amount.or(type('string.numeric.parse').describe('数値').to(amount)).or(noValue);
-    return type('string | number | null').pipe(trimToNull).to(number).default(null);
+    return type('string | number | null')
+        .pipe(trimToNull, toNumber)
+        .to(`number <= ${max} | null`)
+        .configure(mustBe('数値'), 'union')
+        .default(null);
 };
 
 // 行ID。URL の :id やフォームから来る文字列（'12'）も数値として受け付ける
 const requiredId = () => {
-    const id = type('number.integer > 0').describe('数値');
-    return id.or(type('string.integer.parse').describe('数値').to(id));
+    return type('string | number').pipe(toNumber).to('number.integer > 0').configure(mustBe('数値'), 'union');
 };
 
 // NULL 可の行ID。更新時に「残す既存行」を指し、新しく足す行では null
 const optionalId = () => {
-    return type('string | number | null').pipe(trimToNull).to(requiredId().or(noValue)).default(null);
+    return type('string | number | null')
+        .pipe(trimToNull, toNumber)
+        .to('number.integer > 0 | null')
+        .configure(mustBe('数値'), 'union')
+        .default(null);
 };
 
 // 真偽値。省略時は false
 const flag = () => {
-    return type('boolean').default(false);
+    return type('boolean').configure(mustBe('真偽値'), 'union').default(false);
 };
 
 // 子テーブルの行の配列。「省略＝現状維持」と「[] ＝全削除」を db 層が見分けるので、
 // 既定値を入れずに省略可のままにしておく
 const rows = (rowSchema) => {
     return rowSchema.array().optional();
-};
-
-// 項目そのものが省略されたとき（undefined）に既定値を使う。
-// arktype の .default() はオブジェクトの項目にしか使えないので、
-// 単体で使うスキーマ（forkTypeSchema）の省略時の値はこちらで決める
-const orFallback = (schema, fallback) => {
-    return type('undefined').pipe(() => fallback).or(schema);
 };
 
 // --- 個別の値ごとのスキーマ -------------------------------------------------
@@ -102,12 +120,14 @@ const commitHash = () => {
     return type(/^[0-9a-zA-Z]{1,64}$/).describe('コミットハッシュ');
 };
 
-// レシピの生まれ方。allowed のどれか
-const forkType = (allowed) => {
+// レシピの生まれ方。allowed のどれかで、値が undefined なら fallback として読む。
+// arktype の .default() はオブジェクトの項目にしか使えないので、単体で使う forkTypeSchema の
+// 省略時の値はこの読み替えが決める（項目として使うときは .default() も併せて付ける）
+const forkType = (allowed, fallback) => {
     const labels = allowed.map((kind) => forkTypeLabels[kind]).join('か');
-    const message = () => `${labels}のどれかで指定してください`;
-    // 弾かれた理由は「どの番号でもない」の一言で足りるので、番号ごとの内訳は出さない
-    return type(allowed.join(' | ')).configure({ problem: message }, 'self');
+    const kinds = type('undefined').pipe(() => fallback).or(type.enumerated(...allowed));
+    // 名前をそのまま並べても何のことか分からないので、訳を添えた文言にする
+    return kinds.configure(mustBe(`${labels}のどれか`), 'union');
 };
 
 // --- 各テーブルの入力 -------------------------------------------------------
@@ -145,15 +165,15 @@ const recipeSchema = type({
     thumbnail: optionalText(255),
     is_private: flag(),
     is_draft: flag(),
-    fork_type: forkType([FORK_TYPE_ORIGINAL, FORK_TYPE_ARRANGE, FORK_TYPE_PORT]).default(FORK_TYPE_ORIGINAL),
+    fork_type: forkType(FORK_TYPES, FORK_TYPE_ORIGINAL).default(FORK_TYPE_ORIGINAL),
     environment: rows(environmentSchema),
     ingredients: rows(ingredientSchema),
     steps: rows(stepSchema),
     commit_message: optionalText(255)
 });
 
-// フォークで作られるレシピはオリジナル(0)にはならない。省略時はアレンジ
-const forkTypeSchema = orFallback(forkType([FORK_TYPE_ARRANGE, FORK_TYPE_PORT]), FORK_TYPE_ARRANGE);
+// フォークで作られるレシピは original にはならない。省略時はアレンジ
+const forkTypeSchema = forkType([FORK_TYPE_ARRANGE, FORK_TYPE_PORT], FORK_TYPE_ARRANGE);
 
 // プルリクエスト（recipe_pull_requests）作成のボディ
 const pullRequestSchema = type({

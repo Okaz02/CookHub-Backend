@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS recipes (
     stars_count      INT          NOT NULL DEFAULT 0,
     is_private       TINYINT(1)   NOT NULL DEFAULT 0,
     is_draft         TINYINT(1)   NOT NULL,
-    fork_type        TINYINT      NOT NULL,         -- 0 = オリジナル / 1 = アレンジ / 2 = 移植
+    -- original = フォークではない / arrange = アレンジ / port = 移植（別の環境・人数に作り直したもの）
+    fork_type        ENUM('original', 'arrange', 'port') NOT NULL DEFAULT 'original',
     created_at       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (recipe_id),

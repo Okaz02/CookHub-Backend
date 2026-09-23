@@ -25,6 +25,10 @@ configure({
 
     keywords: typeNames,
 
+    // 受け付ける値をひとまとめに言い表せる場合（「数値」「コミットハッシュ」など）。
+    // 呼び名は各スキーマが describe と configure で付ける
+    predicate: { problem: (error) => `${error.expected}で指定してください` },
+
     required: { problem: () => '必須です' },
     domain: { problem: (error) => `${error.expected}で指定してください` },
     // 形式の名前（メールアドレス・コミットハッシュ等）は各スキーマが describe で付ける

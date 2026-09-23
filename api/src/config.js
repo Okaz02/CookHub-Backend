@@ -1,7 +1,7 @@
 require('dotenv').config();
 // スキーマ検証のエラーメッセージの日本語化。arktype 本体を読み込む前に済ませる必要があり、
 // config.js は他のどのモジュールよりも先に読み込まれるので、ここに置けば必ず間に合う
-require('./schemas/arktypeConfig');
+require('./arktypeConfig');
 const { type, ArkErrors } = require('arktype');
 
 // 環境変数は文字列でしか渡ってこないので、数値と真偽値は読み替えてから使う。
