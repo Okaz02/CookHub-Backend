@@ -172,7 +172,6 @@ async function getCheckedRecipeCommit(recipeId, commitId, viewerId = null) {
     return { ok: true, data: { ...toCommit(row), changes: row.changes } };
 }
 
-// 省略された項目は recipeSchema の既定値ではなく既存の値になる
 function toRecipeInput(row) {
     return {
         title: row.title,

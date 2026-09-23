@@ -1,7 +1,6 @@
 const { pool } = require('../db/pool');
 const { DOLT_AUTO_COMMIT, DOLT_COMMIT_AUTHOR } = require('../config');
 
-// コミットに失敗してもリクエストは成功のまま返す
 async function commitDolt(message, userId) {
     if (!DOLT_AUTO_COMMIT) {
         return null;
@@ -27,7 +26,7 @@ async function commitDolt(message, userId) {
             '-m',
             message
         ]);
-        // CALL は結果セットの配列で返ってくるため、どちらの形でも1行目を取り出す
+        // CALL は結果セットの配列で返ることがある
         const row = Array.isArray(rows[0]) ? rows[0][0] : rows[0];
         return row ? row.hash : null;
     } catch (error) {

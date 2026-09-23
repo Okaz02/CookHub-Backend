@@ -430,7 +430,6 @@ async function mergePullRequest(prId, userId, commitMessage) {
 
     const commit = await commitDolt(commitMessage, userId);
 
-    // マージのコミットハッシュはコミット後にしか分からないので、記録してから改めてコミットする
     await pool.execute(
         'UPDATE recipe_pull_requests SET status = ?, merged_commit_hash = ?, merged_at = NOW() WHERE id = ?',
         ['merged', commit, pullRequest.id]

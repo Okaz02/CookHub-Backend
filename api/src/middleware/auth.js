@@ -24,7 +24,6 @@ async function requireAuth(req, res, next) {
     }
 }
 
-// トークンが付いていて使えないときは 401
 async function optionalAuth(req, res, next) {
     const rawToken = extractToken(req);
     if (!rawToken) {

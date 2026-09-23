@@ -44,7 +44,6 @@ async function registerAccount(payload) {
         throw error;
     }
 
-    // トークンの行もアカウント作成のコミットに含める
     const token = await issueAccessToken(account);
     await commitDolt(`アカウント作成: ${account.username}`, account.user_id);
 
