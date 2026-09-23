@@ -1,8 +1,5 @@
 const { configure } = require('arktype/config');
 
-// ArkType が返すエラーメッセージは既定では英語（"must be a string"）なので、
-// そのままクライアントに返す文言を日本語に差し替える。
-//
 // この設定は arktype 本体（require('arktype')）を読み込むより先に済ませる必要があり、
 // 他のどのモジュールよりも先に読み込まれる config.js の先頭から読み込んでいる。
 //

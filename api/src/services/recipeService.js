@@ -76,7 +76,6 @@ function toCommit(row) {
     };
 }
 
-// 権限チェック付きでレシピ行を取得する。権限が無ければ例外を投げる（＝呼び出し側は結果を信頼してよい）
 async function requireRecipePermission(recipeId, viewerId, permission, action) {
     const row = await recipeDb.getRecipeById(recipeId);
     if (!row) {
@@ -92,12 +91,10 @@ async function requireRecipePermission(recipeId, viewerId, permission, action) {
     return row;
 }
 
-// 閲覧権限が無ければ例外を投げる
 function requireViewableRecipe(recipeId, viewerId) {
     return requireRecipePermission(recipeId, viewerId, 'pull', '閲覧');
 }
 
-// 管理権限（オーナー）が無ければ例外を投げる
 function requireAdministrableRecipe(recipeId, userId, action) {
     return requireRecipePermission(recipeId, userId, 'admin', action);
 }
@@ -112,7 +109,6 @@ function toDuplicateNameError(error) {
     return error;
 }
 
-// recipe は recipeSchema を通した値、parentRecipeId はフォーク元のレシピID（オリジナルなら null）
 async function saveRecipe(userId, recipe, parentRecipeId, message) {
     try {
         const { commit, recipe: created } = await recipeDb.createRecipe(userId, recipe, parentRecipeId, message);
@@ -136,7 +132,6 @@ async function forkCheckedRecipe(userId, recipeId, payload = {}) {
     const source = await requireViewableRecipe(recipeId, userId);
     const forkType = forkTypeSchema.assert(payload.fork_type);
 
-    // 元レシピの上に payload を重ねる。渡された項目だけが上書きされ、残りは引き継がれる
     const recipe = recipeSchema.assert({
         ...source,
         ...payload,

@@ -17,8 +17,8 @@ const loginSchema = type({
     password: type('string >= 1').describe('文字列')
 });
 
-// アクセストークンは 40文字の16進文字列（accountService.generateAccessToken が発行する形）。
-// 形が違う時点で DB を引くまでもなく無効なので、認証ミドルウェアがここで弾く
+// accountService.generateAccessToken が発行する形。形が違う時点で DB を引くまでもなく
+// 無効なので、認証ミドルウェアがここで弾く
 const accessTokenSchema = type(/^[0-9a-f]{40}$/).describe('アクセストークン');
 
 module.exports = {

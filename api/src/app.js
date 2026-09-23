@@ -22,7 +22,6 @@ function toSchemaIssues(error) {
 
 // eslint-disable-next-line no-unused-vars
 app.use((error, req, res, next) => {
-    // 入力がスキーマに合わなかった場合。どの項目が駄目だったのかまで返す
     const issues = toSchemaIssues(error);
     if (issues) {
         const message = issues

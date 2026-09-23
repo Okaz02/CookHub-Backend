@@ -2,9 +2,9 @@ const { type } = require('arktype');
 
 // fork_type はそのレシピの生まれ方を表す。recipes.fork_type の ENUM と同じ名前で、
 // APIのリクエスト・レスポンスもこの名前のまま扱う（DBとAPIで呼び方を変えない）
-const FORK_TYPE_ORIGINAL = 'original'; // フォークではない
-const FORK_TYPE_ARRANGE = 'arrange';   // アレンジ
-const FORK_TYPE_PORT = 'port';         // 移植（別の環境・人数に作り直したもの）
+const FORK_TYPE_ORIGINAL = 'original';
+const FORK_TYPE_ARRANGE = 'arrange';
+const FORK_TYPE_PORT = 'port'; // 別の環境・人数に作り直したもの
 const FORK_TYPES = [FORK_TYPE_ORIGINAL, FORK_TYPE_ARRANGE, FORK_TYPE_PORT];
 
 // 弾いたときにどれを指しているのかが分かるように、エラーメッセージでは名前に訳を添える
@@ -29,7 +29,6 @@ const trimToNull = (value) => {
     return trimmed === '' ? null : trimmed;
 };
 
-// NULL 可の列の「未入力」
 const noValue = type('null').describe('未入力');
 
 // 受け付けない型（文字列の項目に数値が来た等）を弾いたときの文言。
@@ -74,7 +73,6 @@ const toNumber = (value, ctx) => {
     return Number.isNaN(number) ? ctx.error('数値') : number;
 };
 
-// NULL 可の数値。フォームから来る文字列（'2.5'）も数値として受け付ける
 const optionalNumber = (max) => {
     return type('string | number | null')
         .pipe(trimToNull, toNumber)
@@ -83,7 +81,6 @@ const optionalNumber = (max) => {
         .default(null);
 };
 
-// 行ID。URL の :id やフォームから来る文字列（'12'）も数値として受け付ける
 const requiredId = () => {
     return type('string | number').pipe(toNumber).to('number.integer > 0').configure(mustBe('数値'), 'union');
 };
@@ -97,7 +94,6 @@ const optionalId = () => {
         .default(null);
 };
 
-// 真偽値。省略時は false
 const flag = () => {
     return type('boolean').configure(mustBe('真偽値'), 'union').default(false);
 };
@@ -115,7 +111,7 @@ const branchName = () => {
     return requiredText(255).default('main');
 };
 
-// Dolt のコミットハッシュ。数値ではないので英数字であることだけを見る
+// Dolt のコミットハッシュ
 const commitHash = () => {
     return type(/^[0-9a-zA-Z]{1,64}$/).describe('コミットハッシュ');
 };
@@ -126,7 +122,6 @@ const commitHash = () => {
 const forkType = (allowed, fallback) => {
     const labels = allowed.map((kind) => forkTypeLabels[kind]).join('か');
     const kinds = type('undefined').pipe(() => fallback).or(type.enumerated(...allowed));
-    // 名前をそのまま並べても何のことか分からないので、訳を添えた文言にする
     return kinds.configure(mustBe(`${labels}のどれか`), 'union');
 };
 
@@ -182,7 +177,6 @@ const pullRequestSchema = type({
     commit_message: optionalText(255)
 });
 
-// マージのボディ。読むのは commit_message だけ
 const mergeSchema = type({
     commit_message: optionalText(255)
 });
@@ -192,7 +186,6 @@ const recipeParamsSchema = type({
     id: requiredId()
 });
 
-// :commitId は Dolt のコミットハッシュ
 const commitParamsSchema = recipeParamsSchema.merge({
     commitId: commitHash()
 });
