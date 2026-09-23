@@ -152,6 +152,14 @@ async function syncChildRows(connection, recipeId, tableKey, rows) {
     }
 }
 
+async function syncAllChildRows(connection, recipeId, recipe) {
+    for (const tableKey of Object.keys(CHILD_TABLES)) {
+        if (recipe[tableKey]) {
+            await syncChildRows(connection, recipeId, tableKey, recipe[tableKey]);
+        }
+    }
+}
+
 async function createRecipe(ownerId, recipe, parentRecipeId, commitMessage) {
     const connection = await pool.getConnection();
     try {
@@ -168,7 +176,7 @@ async function createRecipe(ownerId, recipe, parentRecipeId, commitMessage) {
                 stars_count,
                 recipe_status,
                 fork_type
-            ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+            ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`,
             [
                 ownerId,
                 parentRecipeId,
@@ -183,26 +191,7 @@ async function createRecipe(ownerId, recipe, parentRecipeId, commitMessage) {
 
         const recipeId = result.insertId;
 
-        if (recipe.environment && recipe.environment.length > 0) {
-            await connection.query(
-                'INSERT INTO recipe_environment (recipe_id, sort_order, key_name, value) VALUES ?',
-                [recipe.environment.map((row, i) => [recipeId, i, row.key_name, row.value])]
-            );
-        }
-
-        if (recipe.ingredients && recipe.ingredients.length > 0) {
-            await connection.query(
-                'INSERT INTO recipe_ingredients (recipe_id, sort_order, name, amount, unit) VALUES ?',
-                [recipe.ingredients.map((row, i) => [recipeId, i, row.name, row.amount, row.unit])]
-            );
-        }
-
-        if (recipe.steps && recipe.steps.length > 0) {
-            await connection.query(
-                'INSERT INTO recipe_steps (recipe_id, sort_order, body, image_url) VALUES ?',
-                [recipe.steps.map((row, i) => [recipeId, i, row.body, row.image_url])]
-            );
-        }
+        await syncAllChildRows(connection, recipeId, recipe);
 
         await connection.commit();
 
@@ -339,17 +328,7 @@ async function applyRecipeUpdate(connection, recipeId, recipe) {
         ]
     );
 
-    if (recipe.environment) {
-        await syncChildRows(connection, recipeId, 'environment', recipe.environment);
-    }
-
-    if (recipe.ingredients) {
-        await syncChildRows(connection, recipeId, 'ingredients', recipe.ingredients);
-    }
-
-    if (recipe.steps) {
-        await syncChildRows(connection, recipeId, 'steps', recipe.steps);
-    }
+    await syncAllChildRows(connection, recipeId, recipe);
 }
 
 async function updateRecipeById(recipeId, userId, recipe, commitMessage) {
