@@ -12,8 +12,6 @@ const { registerSchema, loginSchema } = require('../schemas/accountSchemas');
 
 const BCRYPT_ROUNDS = 10;
 
-// アクセストークンは 40文字の16進文字列。平文は発行時のレスポンスにしか現れず、
-// DB には SHA-256 ハッシュだけを保存するので、後から値を確認することはできない。
 function generateAccessToken() {
     return crypto.randomBytes(20).toString('hex');
 }
@@ -46,8 +44,7 @@ async function registerAccount(payload) {
         throw error;
     }
 
-    // コミットはトークンを発行したあと。先にコミットすると、発行したトークンの行が
-    // どのコミットにも属さないまま残り、次に誰かが作ったレシピのコミットに紛れ込む。
+    // 先にコミットすると、トークンの行が次に誰かが作ったレシピのコミットに紛れ込む
     const token = await issueAccessToken(account);
     await commitDolt(`アカウント作成: ${account.username}`, account.user_id);
 
@@ -74,7 +71,6 @@ async function loginAccount(payload) {
     return { ...account, token };
 }
 
-// トークンの形式は認証ミドルウェアが accessTokenSchema で検証済み。ここで見るのは失効の有無だけ
 async function getAccountBySession(token) {
     const tokenHash = hashAccessToken(token);
     const account = await getAccountByTokenHash(tokenHash);

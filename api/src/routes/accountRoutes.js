@@ -15,7 +15,6 @@ router.post('/login', asyncHandler(async (req, res) => {
     res.status(200).json(account);
 }));
 
-// ログイン済みかどうかの確認: `Authorization: token <アクセストークン>` で認証する
 router.get('/session', requireAuth, asyncHandler(async (req, res) => {
     res.status(200).json(req.account);
 }));

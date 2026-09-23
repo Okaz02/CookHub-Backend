@@ -1,8 +1,6 @@
 const { commitDolt } = require('../clients/doltClient');
 const { pool } = require('./pool');
 
-// レシピ取得の共通部分。呼び出し側で WHERE / ORDER BY / LIMIT を足して使う。
-// カラム名はDBのまま返し、レスポンスの形への整形はservice層のtoRecipe()に任せる
 const RECIPE_SELECT = `
     SELECT r.recipe_id,
            r.title,
@@ -20,8 +18,7 @@ const RECIPE_SELECT = `
     FROM recipes r
     JOIN accounts a ON a.user_id = r.owner_id`;
 
-// あるレシピに触れたコミットの一覧。子テーブルだけの変更（材料の増減など）も
-// 履歴に出したいので、4つの差分テーブルを横断してコミットハッシュを集める
+// 子テーブルだけの変更も履歴に出すため、4つの差分テーブルからハッシュを集める
 const COMMIT_LIST_SELECT = `
     SELECT l.commit_hash, l.message, l.committer, l.email, l.date
     FROM dolt_log l
@@ -34,14 +31,11 @@ const COMMIT_LIST_SELECT = `
     ORDER BY l.date DESC
     LIMIT ?`;
 
-// コミット1件のメタ情報。dolt_log は全レシピ共通なのでハッシュだけで引ける
 const COMMIT_SELECT = `
     SELECT l.commit_hash, l.message, l.committer, l.email, l.date
     FROM dolt_log l
     WHERE l.commit_hash = ?`;
 
-// そのコミットでレシピのどこが変わったか。Before/After を並べて表示するため、
-// 変更前（from_）と変更後（to_）の値を表示に使う列だけ取り出す
 const COMMIT_DIFF_RECIPE = `
     SELECT diff_type,
            from_title, to_title,
@@ -112,17 +106,12 @@ const CHILD_TABLES = {
     }
 };
 
-// 送られてきた行を「既存のどの行を書き換えるか」に対応づける。戻り値は rows と同じ長さで、
-// 書き換える既存行の id か、新しく足す行なら null が並ぶ。
-// id が入っていればその行を使い、入っていなければ余っている既存行を上から順に使い回す。
-//
-// id 無しを一律 INSERT（＋既存を全部 DELETE）にしてしまうと、id を送ってこない
-// クライアントからの更新で、中身が1つも変わっていない材料や手順まで Dolt の差分に
-// 「削除」「追加」として並んでしまう。位置で拾い直せば、実際に変わった行だけが差分に出る
+// id の無い行には余っている既存行を順に割り当てる。一律に削除＋追加にすると、
+// 変わっていない行まで Dolt の差分に出る
 function matchExistingRows(rows, existingIds) {
     const available = new Set(existingIds);
 
-    // id 指定のぶんを先に確保する。順番を逆にすると、位置で取った行が後ろの id 指定とぶつかる
+    // 先に確保しないと、位置で取った行が後ろの id 指定とぶつかる
     const targetIds = rows.map((row) => {
         if (row.id != null && available.has(row.id)) {
             available.delete(row.id);
@@ -131,7 +120,6 @@ function matchExistingRows(rows, existingIds) {
         return null;
     });
 
-    // 誰にも指定されなかった既存行を、id の無い行へ前から順に割り当てる（足りなければ新規行）
     const spare = existingIds.filter((id) => available.has(id));
     let spareIndex = 0;
     for (let i = 0; i < targetIds.length; i += 1) {
@@ -166,8 +154,6 @@ async function syncChildRows(connection, recipeId, tableKey, rows) {
     }
 }
 
-// recipe は recipeSchemas の recipeSchema を通った値。列の型・既定値の補完は済んでいる。
-// parentRecipeId はフォーク元のレシピID（オリジナルなら null）
 async function createRecipe(ownerId, recipe, parentRecipeId, commitMessage) {
     const connection = await pool.getConnection();
     try {
@@ -336,10 +322,6 @@ async function deleteRecipeById(recipeId, userId, commitMessage) {
     return { commit };
 }
 
-// recipes の本体列と子テーブル(environment/ingredients/steps)を、
-// 開いている connection の中でまとめて書き換える。updateRecipeById と
-// mergePullRequest の両方から使う（同じ書き換えを2箇所に書かないため）。
-// recipe は recipeSchema を通った値か、同じ形に組み立てた既存のレシピ行
 async function applyRecipeUpdate(connection, recipeId, recipe) {
     await connection.execute(
         `UPDATE recipes
@@ -359,7 +341,6 @@ async function applyRecipeUpdate(connection, recipeId, recipe) {
         ]
     );
 
-    // 省略された子テーブルは現状維持。[] が渡されたときだけ全削除になる
     if (recipe.environment) {
         await syncChildRows(connection, recipeId, 'environment', recipe.environment);
     }
@@ -390,23 +371,16 @@ async function updateRecipeById(recipeId, userId, recipe, commitMessage) {
     return { commit };
 }
 
-// 取り込む側の行の id は取り込まれる側の行を指していないので、そのまま渡すと
-// 無関係な行を書き換えてしまう。id を外して syncChildRows に位置で対応づけさせる
+// 取り込む側の id は取り込まれる側の行を指していない
 function withoutRowIds(rows) {
     return rows.map((row) => ({ ...row, id: null }));
 }
-
-// recipe_pull_requests.status の ENUM のうち、マージ済みを表す値
-// （作成時は列の既定値の 'open' が入る）
-const PR_STATUS_MERGED = 'merged';
 
 async function getPullRequestById(prId) {
     const [rows] = await pool.query('SELECT * FROM recipe_pull_requests WHERE id = ?', [prId]);
     return rows[0] || null;
 }
 
-// source（フォークした自分のレシピ）の変更を target（フォーク元のレシピ）に
-// 取り込んでほしいという提案を1件作る
 async function createPullRequest(sourceRecipeId, targetRecipeId, userId, pullRequest, commitMessage) {
     const { title, content } = pullRequest;
 
@@ -422,10 +396,7 @@ async function createPullRequest(sourceRecipeId, targetRecipeId, userId, pullReq
     return { commit, pullRequest: created };
 }
 
-// PR を1件マージする。source の中身（説明・必須環境・材料・手順）を target に書き写す。
-// マージ済みかどうかは merged_at の有無で判定する（target が source と既に同じ内容の場合、
-// commitDolt は --skip-empty により null を返すことがあるため merged_commit_hash では判定できない）。
-// タイトルや公開設定など target 自体の属性は変えない
+// merged_commit_hash は --skip-empty で null になり得るので、マージ済みかは merged_at で見る
 async function mergePullRequest(prId, userId, commitMessage) {
     const pullRequest = await getPullRequestById(prId);
     if (!pullRequest) {
@@ -461,11 +432,10 @@ async function mergePullRequest(prId, userId, commitMessage) {
 
     const commit = await commitDolt(commitMessage, userId);
 
-    // マージで生まれたコミットのハッシュはコミット後にしか分からないため、
-    // レシピ本体の書き換えとは別に記録し、そのための変更も改めてコミットする
+    // マージのコミットハッシュはコミット後にしか分からないので、記録してから改めてコミットする
     await pool.execute(
         'UPDATE recipe_pull_requests SET status = ?, merged_commit_hash = ?, merged_at = NOW() WHERE id = ?',
-        [PR_STATUS_MERGED, commit, pullRequest.id]
+        ['merged', commit, pullRequest.id]
     );
     await commitDolt(`プルリクエストをマージ済みとして記録: #${pullRequest.id}`, userId);
 

@@ -1,8 +1,7 @@
 const { pool } = require('../db/pool');
 const { DOLT_AUTO_COMMIT, DOLT_COMMIT_AUTHOR } = require('../config');
 
-// データの変更履歴を残すのが目的なので、コミットに失敗してもリクエスト自体は
-// 成功させ、ログだけ残す。
+// 失敗しても履歴が残らないだけなので、リクエストは成功させる
 async function commitDolt(message, userId) {
     if (!DOLT_AUTO_COMMIT) {
         return null;
@@ -20,8 +19,7 @@ async function commitDolt(message, userId) {
     }
 
     try {
-        // -A はその時点の未コミットの変更をすべて含める。テーブルを個別に DOLT_ADD しても
-        // 範囲は絞れず（accounts なども一緒にコミットされる）、絞れているように見えるだけだった。
+        // テーブルを個別に DOLT_ADD しても範囲は絞れないので -A でよい
         const [rows] = await pool.query('CALL DOLT_COMMIT(?, ?, ?, ?, ?, ?)', [
             '-A',
             '--skip-empty',

@@ -24,7 +24,7 @@ async function requireAuth(req, res, next) {
     }
 }
 
-// トークンが渡されているのに使えない場合は、形が違うのか失効しているのかに関わらず 401 にする
+// トークンが付いているなら、使えなくても未ログイン扱いにせず 401
 async function optionalAuth(req, res, next) {
     const rawToken = extractToken(req);
     if (!rawToken) {

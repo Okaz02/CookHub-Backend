@@ -34,7 +34,6 @@ router.get('/trend', optionalAuth, asyncHandler(async (req, res) => {
     res.status(200).json(result);
 }));
 
-// トークンは任意。非公開レシピは管理者（オーナー）のトークンがないと 403 になる。
 router.get('/:id', validateParams(recipeParamsSchema), optionalAuth, asyncHandler(async (req, res) => {
     const { id } = req.params;
     const result = await getCheckedRecipeDetail(id, req.account?.user_id);

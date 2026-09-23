@@ -1,4 +1,3 @@
-// 設定の読み込みとスキーマ検証の日本語化（下のエラーハンドラが返すメッセージ）を先に済ませる
 require('./config');
 const express = require('express');
 const cors = require('cors');
@@ -14,9 +13,7 @@ app.use(express.json());
 app.use('/api/accounts', accountRoutes);
 app.use('/api/recipes', recipeRoutes);
 
-// スキーマ検証で弾かれた項目の一覧を取り出す。検証のエラーは、スキーマを直接呼ぶ側
-// （ミドルウェア）からは ArkErrors がそのまま、.assert() を使う側（service 層）からは
-// TraversalError に包まれて渡ってくる。検証以外のエラーなら undefined
+// .assert() で投げられた ArkErrors は TraversalError に包まれて来る
 function toSchemaIssues(error) {
     return error instanceof ArkErrors ? error : error?.arkErrors;
 }

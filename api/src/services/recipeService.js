@@ -6,9 +6,7 @@ const {
     mergeSchema
 } = require('../schemas/recipeSchemas');
 
-// 閲覧者から見たそのレシピへの権限。push / pull という名前は git の操作をそのまま借りていて、
-// push = 書き換えてよい、pull = 中身を見てよい、を表す。
-// row は recipeDb から返る素のDB行（recipe_id, title, user_id, username, ... 等の生カラム名）
+// push / pull は git から借りた名前で、push = 書き換え可、pull = 閲覧可
 function toPermissions(row, viewerId) {
     const admin = viewerId != null && row.user_id === viewerId;
 
@@ -19,9 +17,6 @@ function toPermissions(row, viewerId) {
     };
 }
 
-// DBの素の行を、APIが返す形に整える。キー名はDBの列名に合わせてあり、
-// 変換するのはネスト構造化（owner）・Boolean化・権限計算・派生値（is_fork）だけ。
-// 表示用の「オーナー名/レシピ名」はクライアント側で owner.username と title から組み立てる
 function toRecipe(row, viewerId = null) {
     const recipe = {
         id: row.recipe_id,
@@ -43,7 +38,7 @@ function toRecipe(row, viewerId = null) {
         updated_at: row.updated_at
     };
 
-    // 詳細取得（getRecipeById）のときだけ environment / ingredients / steps が付いてくる
+    // getRecipeById のときだけ付いてくる
     if (row.environment !== undefined) {
         recipe.environment = row.environment;
     }
@@ -60,8 +55,7 @@ function toRecipe(row, viewerId = null) {
     return recipe;
 }
 
-// Dolt のコミット1件を、フロントが受け取る形（Gitea のコミット表現）に整える。
-// 日時のキーは Gitea の commit.author.date と同じく date（レシピ本体の created_at とは別物）
+// Gitea のコミット表現に合わせる
 function toCommit(row) {
     return {
         sha: row.commit_hash,
@@ -97,7 +91,6 @@ function requireAdministrableRecipe(recipeId, userId, action) {
     return requireRecipePermission(recipeId, userId, 'admin', action);
 }
 
-// 同じ人が同じ名前のレシピを2つ持てない（uq_recipes_owner_title）ので、重複は 409 で返す
 function toDuplicateNameError(error) {
     if (error.code === 'ER_DUP_ENTRY' || error.errno === 1062) {
         const err = new Error('同じ名前のレシピを既に持っています。別の名前を付けてください');
@@ -123,9 +116,6 @@ async function createRecipe(ownerId, payload) {
     return saveRecipe(ownerId, recipe, null, message);
 }
 
-// 既存レシピを自分のレシピとして複製する（GitHub のフォーク相当の「アレンジする」）。
-// 材料・手順・必須環境はそのまま引き継ぎ、payload に入っている項目だけ上書きする。
-// 元レシピは parent_recipe_id に残るので、あとから派生をたどって家系図を作れる。
 async function forkCheckedRecipe(userId, recipeId, payload = {}) {
     const source = await requireViewableRecipe(recipeId, userId);
     const forkType = forkTypeSchema.assert(payload.fork_type);
@@ -182,10 +172,8 @@ async function getCheckedRecipeCommit(recipeId, commitId, viewerId = null) {
     return { ok: true, data: { ...toCommit(row), changes: row.changes } };
 }
 
-// PATCH は送られてきた項目だけを書き換える。recipeSchema は省略された項目に既定値
-// （description=null, recipe_status=public ...）を入れるので、既存の値を下敷きにしてから
-// 重ねないと、タイトルだけ直したつもりで説明が消えたり非公開レシピが公開されたりする。
-// 子テーブルは db 層が「省略＝現状維持」を見るので、ここでは重ねない
+// recipeSchema は省略項目に既定値を入れるので、既存の値を下敷きにしないと
+// 説明が消えたり非公開レシピが公開されたりする
 function toRecipeInput(row) {
     return {
         title: row.title,
@@ -219,8 +207,6 @@ async function deleteCheckedRecipe(userId, recipeId) {
     return { ok: true, commit, data: { id: existing.recipe_id } };
 }
 
-// フォークした自分のレシピ(recipeId)から、フォーク元へのプルリクエストを作る。
-// 自分のフォークであること(admin)と、フォーク元が今も閲覧できること(pull)を確認する
 async function createCheckedPullRequest(userId, recipeId, payload = {}) {
     const source = await requireAdministrableRecipe(recipeId, userId, '提案');
 
@@ -241,8 +227,7 @@ async function createCheckedPullRequest(userId, recipeId, payload = {}) {
     return { ok: true, commit, data: pullRequest };
 }
 
-// PR をマージできるのは取り込まれる側（target = フォーク元）のオーナーだけ。
-// prId はレシピIDではないので、まず PR を引いて target_recipe_id を取り出してから権限を見る
+// prId はレシピ ID ではないので、PR の target_recipe_id で権限を見る
 async function mergeCheckedPullRequest(userId, prId, payload = {}) {
     const { commit_message } = mergeSchema.assert(payload);
 

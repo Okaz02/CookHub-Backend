@@ -13,39 +13,24 @@ const trimToNull = (value) => {
 
 const noValue = type('null').describe('未入力');
 
-// 受け付けない型（文字列の項目に数値が来た等）を弾いたときの文言。
-// 「文字列 か 未入力 のどちらか」のような選択肢の言い換えは読みにくいので、
-// 選択肢をまとめている型（union）にだけ、その列が何の値なのかを一言で付け直す
+// union の既定の文言（「文字列 か 未入力 のどちらか」）は読みにくいので一言に言い直す
 const mustBe = (name) => {
     return { problem: () => `${name}で指定してください` };
 };
 
-// --- 列の形ごとのスキーマ ---------------------------------------------------
-// 型を1つずつ書き下すと、その項目が結局どういう値を受け付けるのかが読み取りにくい。
-// 列の形ごとに名前を付けて、使う側は requiredText(255) のように
-// 「どの列に入るのか」だけを書く。
-//
-// max は DB の列定義（api/src/db/sql/）の文字数・桁に合わせる。
-// 超えた値は Dolt 側で黙って切り捨てられてしまうので、その手前で弾く。
-
-// NOT NULL の文字列。空白だけの入力は未入力として弾く。
-// max を渡さない場合は TEXT 列（実用上の上限が無い）
+// max は DB の列幅に合わせる（超えると Dolt が黙って切り捨てる）。max 無しは TEXT 列
 const requiredText = (max) => {
     const length = max === undefined ? 'string >= 1' : `1 <= string <= ${max}`;
-    // string.trim は前後の空白を落とす読み替え。長さは落としたあとの文字列で見る
     return type('string.trim').describe('文字列').to(length);
 };
 
-// NULL 可の文字列。未入力・空白だけ・項目そのものの省略はすべて null にそろえる
 const optionalText = (max) => {
     const length = max === undefined ? 'string' : `string <= ${max}`;
     const text = type(length).describe('文字列').or(noValue);
     return type('string | null').pipe(trimToNull).to(text).configure(mustBe('文字列'), 'union').default(null);
 };
 
-// フォームから来る文字列（'2.5'）や URL の :id を数値に読み替える。
-// 桁数・範囲・整数かどうかは読み替えたあとの数値で見る。読み替えと一緒に見ると、
-// 弾いた理由が「数値ではない」に丸められて、いくつまでなのかが伝わらなくなる
+// 範囲は読み替えたあとで見る。一緒に見ると弾いた理由が「数値ではない」に丸められる
 const toNumber = (value, ctx) => {
     if (typeof value !== 'string') {
         return value;
@@ -67,7 +52,7 @@ const requiredId = () => {
     return type('string | number').pipe(toNumber).to('number.integer > 0').configure(mustBe('数値'), 'union');
 };
 
-// NULL 可の行ID。更新時に「残す既存行」を指し、新しく足す行では null
+// 更新時に残す既存行の ID。新しく足す行は null
 const optionalId = () => {
     return type('string | number | null')
         .pipe(trimToNull, toNumber)
@@ -76,42 +61,31 @@ const optionalId = () => {
         .default(null);
 };
 
-// 子テーブルの行の配列。「省略＝現状維持」と「[] ＝全削除」を db 層が見分けるので、
-// 既定値を入れずに省略可のままにしておく
+// 省略（現状維持）と []（全削除）を db 層が見分けるので既定値を入れない
 const rows = (rowSchema) => {
     return rowSchema.array().optional();
 };
 
-// --- 個別の値ごとのスキーマ -------------------------------------------------
-
-// ブランチ名。省略時は recipes.default_branch の既定値と同じ 'main'
 const branchName = () => {
     return requiredText(255).default('main');
 };
 
-// Dolt のコミットハッシュ
 const commitHash = () => {
     return type(/^[0-9a-zA-Z]{1,64}$/).describe('コミットハッシュ');
 };
 
-// レシピの生まれ方。allowed のどれかで、値が undefined なら fallback として読む。
-// arktype の .default() はオブジェクトの項目にしか使えないので、単体で使う forkTypeSchema の
-// 省略時の値はこの読み替えが決める（項目として使うときは .default() も併せて付ける）
+// .default() はオブジェクトの項目にしか効かないので、単体で使う forkTypeSchema 用に undefined を読み替える
 const forkType = (allowed, fallback) => {
-        const kinds = type('undefined').pipe(() => fallback).or(type.enumerated(...allowed));
+    const kinds = type('undefined').pipe(() => fallback).or(type.enumerated(...allowed));
     return kinds.configure(mustBe(`${allowed.join('か')}のどれか`), 'union');
 };
 
-// --- 各テーブルの入力 -------------------------------------------------------
-
-// 必須環境（recipe_environment）の1行
 const environmentSchema = type({
     id: optionalId(),
     key_name: requiredText(255),
     value: requiredText(255)
 });
 
-// 材料（recipe_ingredients）の1行。「少々」のように数量が無いものは amount / unit とも null
 const ingredientSchema = type({
     id: optionalId(),
     name: requiredText(255),
@@ -119,17 +93,13 @@ const ingredientSchema = type({
     unit: optionalText(50)
 });
 
-// 手順（recipe_steps）の1行
 const stepSchema = type({
     id: optionalId(),
-    body: requiredText(), // TEXT NOT NULL
+    body: requiredText(),
     image_url: optionalText(255)
 });
 
-// レシピ本体（recipes）と子テーブルの入力。POST /api/recipes と PATCH /api/recipes/:id の
-// ボディはこの形で、db 層はここを通った値しか受け取らない。
-// commit_message の省略時（null）の既定値は service 層が組み立てる。
-// parent_recipe_id はクライアントに決めさせない（フォーク元は :id から service 層が決める）
+// parent_recipe_id はクライアントに決めさせない（:id から service 層が決める）
 const recipeSchema = type({
     title: requiredText(255),
     description: optionalText(),
@@ -143,10 +113,8 @@ const recipeSchema = type({
     commit_message: optionalText(255)
 });
 
-// フォークで作られるレシピは original にはならない。省略時はアレンジ
 const forkTypeSchema = forkType(['arrange', 'port'], 'arrange');
 
-// プルリクエスト（recipe_pull_requests）作成のボディ
 const pullRequestSchema = type({
     title: requiredText(255),
     content: optionalText(),
@@ -157,7 +125,7 @@ const mergeSchema = type({
     commit_message: optionalText(255)
 });
 
-// :id はレシピID（/pull-request/merge だけはプルリクエストID）。検証後は数値になる
+// :id は /pull-request/merge だけプルリクエスト ID
 const recipeParamsSchema = type({
     id: requiredId()
 });
