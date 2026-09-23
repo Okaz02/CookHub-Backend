@@ -1,12 +1,11 @@
 const { pool } = require('../db/pool');
-const { DOLT_AUTO_COMMIT, DOLT_COMMIT_AUTHOR } = require('../config');
 
 async function commitDolt(message, userId) {
-    if (!DOLT_AUTO_COMMIT) {
+    if (process.env.DOLT_AUTO_COMMIT === 'false') {
         return null;
     }
 
-    let author = DOLT_COMMIT_AUTHOR;
+    let author = process.env.DOLT_COMMIT_AUTHOR ?? 'cookhub-api <api@cookhub.local>';
     if (userId != null) {
         const [accounts] = await pool.query(
             'SELECT username, email FROM accounts WHERE user_id = ?',

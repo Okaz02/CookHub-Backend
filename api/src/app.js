@@ -1,4 +1,7 @@
-require('./config');
+require('dotenv').config();
+// arktype 本体より先に読み込む。
+// フォーク・更新では DB 行に入力を重ねて検証するので、入力ではない列を落とす
+require('arktype/config').configure({ onUndeclaredKey: 'delete' });
 const express = require('express');
 const cors = require('cors');
 const { ArkErrors } = require('arktype');

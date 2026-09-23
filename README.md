@@ -15,7 +15,6 @@ cookhub/
     ├── server.js         # エントリポイント
     └── src/
         ├── app.js            # Express アプリ定義・エラーハンドラ
-        ├── config.js         # .env の読み込みと検証
         ├── routes/           # HTTPルーティング
         ├── middleware/       # 認証・パラメータ検証・非同期ラッパー
         ├── schemas/          # ArkType による入力スキーマ（型・必須・上限の定義）
@@ -74,7 +73,6 @@ db層はこのスキーマを通った値しか受け取らないので、型の
 | パスパラメータ | `middleware/validateParams.js`。検証後の `req.params.id` は数値になる |
 | ボディ | service層（`recipeSchema` / `pullRequestSchema` など） |
 | アクセストークン | `middleware/auth.js`。40文字の16進文字列でなければDBを引かずに `401` |
-| 環境変数 | `config.js`。起動時に検証し、設定が壊れていればその場でサーバーが落ちる |
 
 スキーマに合わない値は `400` になり、どの項目が駄目だったのかが `error` に入る。
 
@@ -187,9 +185,6 @@ cd api
 npm install
 npm start
 ```
-
-`api/.env` の値は起動時に検証される。`DOLT_PORT` が数値でないといった設定ミスがあると、
-接続に失敗するまで待たずに、どの項目が悪いのかを表示して起動を止める。
 
 ## 認証
 

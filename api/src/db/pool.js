@@ -1,12 +1,11 @@
 const mysql = require('mysql2/promise');
-const config = require('../config');
 
 const pool = mysql.createPool({
-    host: config.DOLT_HOST,
-    port: config.DOLT_PORT,
-    user: config.DOLT_USER,
-    password: config.DOLT_PASSWORD,
-    database: config.DOLT_DATABASE,
+    host: process.env.DOLT_HOST,
+    port: process.env.DOLT_PORT,
+    user: process.env.DOLT_USER,
+    password: process.env.DOLT_PASSWORD,
+    database: process.env.DOLT_DATABASE,
     waitForConnections: true,
     connectionLimit: 10,
     // Dolt は UTC で時刻を持つ
