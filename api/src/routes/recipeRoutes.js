@@ -14,7 +14,8 @@ const {
     updateCheckedRecipe,
     deleteCheckedRecipe,
     createCheckedPullRequest,
-    mergeCheckedPullRequest
+    mergeCheckedPullRequest,
+    createCheckedIssue
 } = require('../services/recipeService');
 
 const router = express.Router();
@@ -55,6 +56,12 @@ router.get('/:id/commits/:commitId', validateParams(commitParamsSchema), optiona
 router.post('/:id/fork', validateParams(recipeParamsSchema), requireAuth, asyncHandler(async (req, res) => {
     const { id } = req.params;
     const result = await forkCheckedRecipe(req.account.user_id, id, req.body);
+    res.status(201).json(result);
+}));
+
+router.post('/:id/issue/create', validateParams(recipeParamsSchema), requireAuth, asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const result = await createCheckedIssue(req.account.user_id, id, req.body);
     res.status(201).json(result);
 }));
 

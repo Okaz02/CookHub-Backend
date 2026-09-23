@@ -109,6 +109,12 @@ const pullRequestSchema = type({
     commit_message: optionalText(255)
 });
 
+const issueSchema = type({
+    title: requiredText(255),
+    content: optionalText(),
+    commit_message: optionalText(255)
+});
+
 const mergeSchema = type({
     commit_message: optionalText(255)
 });
@@ -126,6 +132,7 @@ module.exports = {
     recipeSchema,
     forkTypeSchema,
     pullRequestSchema,
+    issueSchema,
     mergeSchema,
     recipeParamsSchema,
     commitParamsSchema

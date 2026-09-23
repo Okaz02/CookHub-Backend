@@ -99,6 +99,7 @@ db層はこのスキーマを通った値しか受け取らないので、型の
 | `recipe_ingredients`   | 材料                                                             |
 | `recipe_steps`         | 手順                                                             |
 | `recipe_pull_requests` | プルリクエスト（`source_recipe_id` → `target_recipe_id`）        |
+| `recipe_issues`        | レシピへの Issue（`status` は `open` / `closed`）                |
 
 初期化スクリプトは外部キーの依存順に番号が振られており、上の表と同じ順で実行される。
 
@@ -111,6 +112,7 @@ db層はこのスキーマを通った値しか受け取らないので、型の
 05_init_recipe_ingredients.sql        recipe_ingredients
 06_init_recipe_steps.sql              recipe_steps
 07_init_recipe_pull_requests.sql      recipe_pull_requests
+08_init_recipe_issues.sql             recipe_issues
 99_dolt_commit.sql                    初期スキーマを Dolt にコミットする
 ```
 
@@ -124,6 +126,7 @@ db層はこのスキーマを通った値しか受け取らないので、型の
 | `03_empty_text_to_null.sql` | 空文字で入っていた「値なし」を `NULL` にそろえる（`02` のあとに流す） |
 | `04_fork_type_and_pr_status_to_enum.sql` | `recipes.fork_type` と `recipe_pull_requests.status` を番号から `ENUM` に変更 |
 | `05_recipe_status_to_enum.sql` | `recipes.is_private` と `recipes.is_draft` を `recipe_status` の `ENUM` に統合 |
+| `06_recreate_recipe_issues.sql` | `recipe_issues` を正しい定義で作り直す（行が無い前提） |
 
 Dolt のイメージには `mysql` クライアントが入っていないので、コンテナ内の `dolt` CLI に
 標準入力から流し込む。
@@ -228,6 +231,7 @@ Authorization: Bearer <token>
 | DELETE | `/api/recipes/:id` | 必須 | なし | レシピ削除（オーナーのみ） |
 | POST | `/api/recipes/:id/pull-request/create` | 必須 | 必須 `title` | プルリクエスト作成（`:id` = 自分のフォーク） |
 | POST | `/api/recipes/:id/pull-request/merge` | 必須 | 任意 `commit_message` のみ | プルリクエストのマージ（`:id` = **プルリクエストのID**） |
+| POST | `/api/recipes/:id/issue/create` | 必須 | 必須 `title` | Issue 作成 |
 
 `Content-Type: application/json` を付けてボディを送る場合、JSONとして壊れていると
 `400` になる（ボディを送らないときはヘッダーごと省略してよい）。
@@ -499,3 +503,42 @@ Authorization: Bearer <token>
 - `403`: 取り込み先のオーナーではない（提案者自身がマージしようとした場合を含む）
 - `404`: プルリクエストが無い
 - `409`: 既にマージ済み
+
+### POST /api/recipes/:id/issue/create
+
+`:id` はIssue を立てるレシピのID。閲覧できるレシピなら誰でも立てられる。
+
+必要なもの: **トークン** ＋ **ボディ**。`title` のみ必須項目で、`content` は説明文、
+`commit_message` の省略時は `Issue 作成: <title>`。`status` は常に `open` で作られる。
+
+```json
+{
+  "title": "塩の量が書いてない",
+  "content": "手順 2 で入れる塩の量を教えてください"
+}
+```
+
+- `201`: 作成された Issue
+
+```json
+{
+  "ok": true,
+  "commit": "vs1l2rrki3msk3vcbgn5pmcltab7kc7i",
+  "data": {
+    "id": 1,
+    "recipe_id": 1,
+    "user_id": 5,
+    "title": "塩の量が書いてない",
+    "content": "手順 2 で入れる塩の量を教えてください",
+    "status": "open",
+    "created_at": "2026-09-23T10:41:58.000Z",
+    "updated_at": "2026-09-23T10:41:58.000Z",
+    "closed_at": null
+  }
+}
+```
+
+- `400`: `title` が無い / `:id` が数値でない
+- `401`: トークンが未指定または無効
+- `403`: 他人の非公開・下書きのレシピを指定した
+- `404`: レシピが無い

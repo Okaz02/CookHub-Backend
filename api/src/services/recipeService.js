@@ -3,6 +3,7 @@ const {
     recipeSchema,
     forkTypeSchema,
     pullRequestSchema,
+    issueSchema,
     mergeSchema
 } = require('../schemas/recipeSchemas');
 
@@ -114,6 +115,16 @@ async function createRecipe(ownerId, payload) {
     const message = recipe.commit_message || `レシピ作成: ${recipe.title}`;
 
     return saveRecipe(ownerId, recipe, null, message);
+}
+
+async function createCheckedIssue(userId, recipeId, payload = {}) {
+    await requireViewableRecipe(recipeId, userId);
+
+    const input = issueSchema.assert(payload);
+    const message = input.commit_message || `Issue 作成: ${input.title}`;
+    const { commit, issue } = await recipeDb.createIssue(recipeId, userId, input, message);
+
+    return { ok: true, commit, data: issue };
 }
 
 async function forkCheckedRecipe(userId, recipeId, payload = {}) {
@@ -253,6 +264,7 @@ module.exports = {
     getCheckedRecipeCommit,
     updateCheckedRecipe,
     deleteCheckedRecipe,
+    createCheckedIssue,
     createCheckedPullRequest,
     mergeCheckedPullRequest
 };

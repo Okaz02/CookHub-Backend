@@ -291,6 +291,7 @@ async function deleteRecipeById(recipeId, userId, commitMessage) {
         await connection.execute('DELETE FROM recipe_environment WHERE recipe_id = ?', [recipeId]);
         await connection.execute('DELETE FROM recipe_ingredients WHERE recipe_id = ?', [recipeId]);
         await connection.execute('DELETE FROM recipe_steps WHERE recipe_id = ?', [recipeId]);
+        await connection.execute('DELETE FROM recipe_issues WHERE recipe_id = ?', [recipeId]);
         await connection.execute(
             'DELETE FROM recipe_pull_requests WHERE target_recipe_id = ? OR source_recipe_id = ?',
             [recipeId, recipeId]
@@ -418,12 +419,21 @@ async function mergePullRequest(prId, userId, commitMessage) {
     return { commit, pullRequest: await getPullRequestById(pullRequest.id) };
 }
 
-async function createIssue(targetRecipeId) {
-    const [rows] = await pool.execute(
-        'INSERT INTO recipe_issues (target_recipe_id) VALUES (?)',
-        [targetRecipeId]
+async function getIssueById(issueId) {
+    const [rows] = await pool.query('SELECT * FROM recipe_issues WHERE id = ?', [issueId]);
+    return rows[0] || null;
+}
+
+async function createIssue(recipeId, userId, issue, commitMessage) {
+    const [result] = await pool.execute(
+        'INSERT INTO recipe_issues (recipe_id, user_id, title, content) VALUES (?, ?, ?, ?)',
+        [recipeId, userId, issue.title, issue.content]
     );
-    return rows;
+
+    const created = await getIssueById(result.insertId);
+    const commit = await commitDolt(commitMessage, userId);
+
+    return { commit, issue: created };
 }
 
 module.exports = {
@@ -437,5 +447,6 @@ module.exports = {
     deleteRecipeById,
     getPullRequestById,
     createPullRequest,
-    mergePullRequest
+    mergePullRequest,
+    createIssue
 };
