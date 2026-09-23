@@ -441,7 +441,7 @@ async function mergePullRequest(prId, userId, commitMessage) {
 
 async function createIssue(targetRecipeId) {
     const [rows] = await pool.execute(
-        'SELECT * FROM recipe_pull_requests WHERE target_recipe_id = ?',
+        'INSERT INTO recipe_issues (target_recipe_id) VALUES (?)',
         [targetRecipeId]
     );
     return rows;
