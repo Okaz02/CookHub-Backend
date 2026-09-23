@@ -79,7 +79,7 @@ db層はこのスキーマを通った値しか受け取らないので、型の
 スキーマに合わない値は `400` になり、どの項目が駄目だったのかが `error` に入る。
 
 ```json
-{ "error": "ingredients.0.amount: 無効な入力: 数値が期待されましたが、NaNが入力されました" }
+{ "error": "ingredients[0].amount must be a number (was \"abc\")" }
 ```
 
 ### インフラ (docker-compose.yml)

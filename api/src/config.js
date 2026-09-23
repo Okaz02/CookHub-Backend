@@ -1,15 +1,16 @@
 require('dotenv').config();
-// arktype 本体を読み込むより先に済ませる必要がある
-require('./arktypeConfig');
+// arktype 本体より先に読み込む。
+// フォーク・更新では DB 行に入力を重ねて検証するので、入力ではない列を落とす
+require('arktype/config').configure({ onUndeclaredKey: 'delete' });
 const { type, ArkErrors } = require('arktype');
 
 const portNumber = (fallback) => {
-    const port = type('number.integer > 0').describe('数値');
-    return port.or(type('string.integer.parse').describe('数値').to(port)).default(fallback);
+    const port = type('number.integer >= 1');
+    return port.or(type('string.integer.parse').to(port)).default(fallback);
 };
 
 const envFlag = (fallback) => {
-    const flag = type("boolean | 'true' | 'false' | '1' | '0'").describe('true か false');
+    const flag = type("boolean | 'true' | 'false' | '1' | '0'");
     return flag.pipe((value) => value === true || value === 'true' || value === '1').default(fallback);
 };
 

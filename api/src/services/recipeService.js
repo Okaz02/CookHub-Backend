@@ -172,8 +172,7 @@ async function getCheckedRecipeCommit(recipeId, commitId, viewerId = null) {
     return { ok: true, data: { ...toCommit(row), changes: row.changes } };
 }
 
-// recipeSchema は省略項目に既定値を入れるので、既存の値を下敷きにしないと
-// 説明が消えたり非公開レシピが公開されたりする
+// 省略された項目は recipeSchema の既定値ではなく既存の値になる
 function toRecipeInput(row) {
     return {
         title: row.title,
@@ -227,7 +226,6 @@ async function createCheckedPullRequest(userId, recipeId, payload = {}) {
     return { ok: true, commit, data: pullRequest };
 }
 
-// prId はレシピ ID ではないので、PR の target_recipe_id で権限を見る
 async function mergeCheckedPullRequest(userId, prId, payload = {}) {
     const { commit_message } = mergeSchema.assert(payload);
 

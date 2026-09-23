@@ -22,10 +22,7 @@ function toSchemaIssues(error) {
 app.use((error, req, res, next) => {
     const issues = toSchemaIssues(error);
     if (issues) {
-        const message = issues
-            .map((issue) => (issue.path.length > 0 ? `${issue.propString}: ${issue.problem}` : issue.problem))
-            .join(' / ');
-        res.status(400).json({ error: message });
+        res.status(400).json({ error: issues.summary });
         return;
     }
 

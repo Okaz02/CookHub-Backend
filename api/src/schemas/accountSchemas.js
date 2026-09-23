@@ -1,21 +1,20 @@
 const { type } = require('arktype');
 
-const usernameSchema = type('1 <= string <= 255').describe('文字列');
+const usernameSchema = type('1 <= string <= 255');
 
 const registerSchema = type({
     username: usernameSchema,
-    email: type('string.email <= 255').describe('メールアドレス'),
+    email: type('string.email <= 255'),
     // bcrypt は 72 バイトより後ろを見ない
-    password: type('1 <= string <= 72').describe('文字列')
+    password: type('1 <= string <= 72')
 });
 
-// 照合するだけなので上限は見ない
 const loginSchema = type({
     username: usernameSchema,
-    password: type('string >= 1').describe('文字列')
+    password: type('string >= 1')
 });
 
-const accessTokenSchema = type(/^[0-9a-f]{40}$/).describe('アクセストークン');
+const accessTokenSchema = type(/^[0-9a-f]{40}$/);
 
 module.exports = {
     registerSchema,

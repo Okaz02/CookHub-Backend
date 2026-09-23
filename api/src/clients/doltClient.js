@@ -1,7 +1,7 @@
 const { pool } = require('../db/pool');
 const { DOLT_AUTO_COMMIT, DOLT_COMMIT_AUTHOR } = require('../config');
 
-// 失敗しても履歴が残らないだけなので、リクエストは成功させる
+// コミットに失敗してもリクエストは成功のまま返す
 async function commitDolt(message, userId) {
     if (!DOLT_AUTO_COMMIT) {
         return null;
@@ -19,7 +19,6 @@ async function commitDolt(message, userId) {
     }
 
     try {
-        // テーブルを個別に DOLT_ADD しても範囲は絞れないので -A でよい
         const [rows] = await pool.query('CALL DOLT_COMMIT(?, ?, ?, ?, ?, ?)', [
             '-A',
             '--skip-empty',

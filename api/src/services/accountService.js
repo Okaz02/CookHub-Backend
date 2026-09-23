@@ -44,7 +44,7 @@ async function registerAccount(payload) {
         throw error;
     }
 
-    // 先にコミットすると、トークンの行が次に誰かが作ったレシピのコミットに紛れ込む
+    // トークンの行もアカウント作成のコミットに含める
     const token = await issueAccessToken(account);
     await commitDolt(`アカウント作成: ${account.username}`, account.user_id);
 

@@ -106,12 +106,10 @@ const CHILD_TABLES = {
     }
 };
 
-// id の無い行には余っている既存行を順に割り当てる。一律に削除＋追加にすると、
-// 変わっていない行まで Dolt の差分に出る
+// id の無い行には余っている既存行を順に割り当て、変わっていない行を Dolt の差分に出さない
 function matchExistingRows(rows, existingIds) {
     const available = new Set(existingIds);
 
-    // 先に確保しないと、位置で取った行が後ろの id 指定とぶつかる
     const targetIds = rows.map((row) => {
         if (row.id != null && available.has(row.id)) {
             available.delete(row.id);
