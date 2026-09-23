@@ -1,6 +1,7 @@
 const recipeDb = require('../db/recipeDb');
 const {
     FORK_TYPE_PORT,
+    RECIPE_STATUS_PUBLIC,
     recipeSchema,
     forkTypeSchema,
     pullRequestSchema,
@@ -16,7 +17,7 @@ function toPermissions(row, viewerId) {
     return {
         admin,
         push: admin,
-        pull: admin || !row.is_private
+        pull: admin || row.recipe_status === RECIPE_STATUS_PUBLIC
     };
 }
 
@@ -32,8 +33,7 @@ function toRecipe(row, viewerId = null) {
             user_id: row.user_id,
             username: row.username
         },
-        is_private: Boolean(row.is_private),
-        is_draft: Boolean(row.is_draft),
+        recipe_status: row.recipe_status,
         thumbnail: row.thumbnail,
         permissions: toPermissions(row, viewerId),
         default_branch: row.default_branch,
@@ -185,7 +185,7 @@ async function getCheckedRecipeCommit(recipeId, commitId, viewerId = null) {
 }
 
 // PATCH は送られてきた項目だけを書き換える。recipeSchema は省略された項目に既定値
-// （description=null, is_private=false ...）を入れるので、既存の値を下敷きにしてから
+// （description=null, recipe_status=public ...）を入れるので、既存の値を下敷きにしてから
 // 重ねないと、タイトルだけ直したつもりで説明が消えたり非公開レシピが公開されたりする。
 // 子テーブルは db 層が「省略＝現状維持」を見るので、ここでは重ねない
 function toRecipeInput(row) {
@@ -194,8 +194,7 @@ function toRecipeInput(row) {
         description: row.description,
         default_branch: row.default_branch,
         thumbnail: row.thumbnail,
-        is_private: row.is_private,
-        is_draft: row.is_draft,
+        recipe_status: row.recipe_status,
         fork_type: row.fork_type
     };
 }

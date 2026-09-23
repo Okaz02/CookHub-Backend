@@ -13,8 +13,7 @@ CREATE TABLE IF NOT EXISTS recipes (
     description      TEXT         NULL,
     default_branch   VARCHAR(255) NOT NULL DEFAULT 'main',
     stars_count      INT          NOT NULL DEFAULT 0,
-    is_private       TINYINT(1)   NOT NULL DEFAULT 0,
-    is_draft         TINYINT(1)   NOT NULL,
+    recipe_status    ENUM('public', 'private', 'public_draft', 'private_draft') NOT NULL DEFAULT 'public',
     -- original = フォークではない / arrange = アレンジ / port = 移植（別の環境・人数に作り直したもの）
     fork_type        ENUM('original', 'arrange', 'port') NOT NULL DEFAULT 'original',
     created_at       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,

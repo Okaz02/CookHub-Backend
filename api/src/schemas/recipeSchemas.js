@@ -7,6 +7,17 @@ const FORK_TYPE_ARRANGE = 'arrange';
 const FORK_TYPE_PORT = 'port'; // 別の環境・人数に作り直したもの
 const FORK_TYPES = [FORK_TYPE_ORIGINAL, FORK_TYPE_ARRANGE, FORK_TYPE_PORT];
 
+const RECIPE_STATUS_PUBLIC = 'public';
+const RECIPE_STATUS_PRIVATE = 'private';
+const RECIPE_STATUS_PUBLIC_DRAFT = 'public_draft';
+const RECIPE_STATUS_PRIVATE_DRAFT = 'private_draft';
+const RECIPE_STATUSES = [
+    RECIPE_STATUS_PUBLIC,
+    RECIPE_STATUS_PRIVATE,
+    RECIPE_STATUS_PUBLIC_DRAFT,
+    RECIPE_STATUS_PRIVATE_DRAFT
+];
+
 // 弾いたときにどれを指しているのかが分かるように、エラーメッセージでは名前に訳を添える
 const forkTypeLabels = {
     [FORK_TYPE_ORIGINAL]: 'original（オリジナル）',
@@ -94,10 +105,6 @@ const optionalId = () => {
         .default(null);
 };
 
-const flag = () => {
-    return type('boolean').configure(mustBe('真偽値'), 'union').default(false);
-};
-
 // 子テーブルの行の配列。「省略＝現状維持」と「[] ＝全削除」を db 層が見分けるので、
 // 既定値を入れずに省略可のままにしておく
 const rows = (rowSchema) => {
@@ -158,8 +165,7 @@ const recipeSchema = type({
     description: optionalText(),
     default_branch: branchName(),
     thumbnail: optionalText(255),
-    is_private: flag(),
-    is_draft: flag(),
+    recipe_status: type.enumerated(...RECIPE_STATUSES).default(RECIPE_STATUS_PUBLIC),
     fork_type: forkType(FORK_TYPES, FORK_TYPE_ORIGINAL).default(FORK_TYPE_ORIGINAL),
     environment: rows(environmentSchema),
     ingredients: rows(ingredientSchema),
@@ -192,6 +198,10 @@ const commitParamsSchema = recipeParamsSchema.merge({
 
 module.exports = {
     FORK_TYPE_PORT,
+    RECIPE_STATUS_PUBLIC,
+    RECIPE_STATUS_PRIVATE,
+    RECIPE_STATUS_PUBLIC_DRAFT,
+    RECIPE_STATUS_PRIVATE_DRAFT,
     recipeSchema,
     forkTypeSchema,
     pullRequestSchema,

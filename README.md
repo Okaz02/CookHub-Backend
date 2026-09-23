@@ -59,7 +59,8 @@ service層の関数名は、内部で権限チェックを行うものだけ `Ch
 | `recipes.fork_type` | `original`（フォークではない）/ `arrange`（アレンジ）/ `port`（移植） |
 | `recipe_pull_requests.status` | `open`（提案中）/ `merged`（取り込み済み） |
 
-真偽値だけは例外で、`is_private` / `is_draft` / `is_active` のように `is_` で始まる
+レシピの公開状態は `recipe_status` の `ENUM` で持つ。値は `public` / `private` /
+`public_draft` / `private_draft`。単独の真偽値は `is_active` のような `is_` で始まる
 `BOOLEAN` の列にする（`mysql2` の `typeCast` がこの名前を見て `true` / `false` に直す）。
 
 ### 入力の検証
@@ -95,7 +96,7 @@ db層はこのスキーマを通った値しか受け取らないので、型の
 | ---------------------- | ---------------------------------------------------------------- |
 | `accounts`             | アカウント本体。パスワードは bcrypt ハッシュのみ保存する         |
 | `access_tokens`        | アクセストークン。SHA-256 ハッシュのみ保存する                   |
-| `recipes`              | レシピ本体（`title`, `is_private`, `parent_recipe_id` など）     |
+| `recipes`              | レシピ本体（`title`, `recipe_status`, `parent_recipe_id` など） |
 | `recipe_environment`   | 必須環境（調理器具・人数など）の key/value                       |
 | `recipe_ingredients`   | 材料                                                             |
 | `recipe_steps`         | 手順                                                             |
@@ -124,6 +125,7 @@ db層はこのスキーマを通った値しか受け取らないので、型の
 | `02_trim_existing_text_values.sql` | 既存データの前後の空白を除去（`01` のあとに流す） |
 | `03_empty_text_to_null.sql` | 空文字で入っていた「値なし」を `NULL` にそろえる（`02` のあとに流す） |
 | `04_fork_type_and_pr_status_to_enum.sql` | `recipes.fork_type` と `recipe_pull_requests.status` を番号から `ENUM` に変更 |
+| `05_recipe_status_to_enum.sql` | `recipes.is_private` と `recipes.is_draft` を `recipe_status` の `ENUM` に統合 |
 
 Dolt のイメージには `mysql` クライアントが入っていないので、コンテナ内の `dolt` CLI に
 標準入力から流し込む。
@@ -283,8 +285,7 @@ Authorization: Bearer <token>
 {
   "title": "肉じゃが",
   "description": "定番の肉じゃが",
-  "is_private": false,
-  "is_draft": false,
+  "recipe_status": "public",
   "thumbnail": "https://example.com/a.png",
   "environment": [{ "key_name": "人数", "value": "2人分" }],
   "ingredients": [{ "name": "じゃがいも", "amount": 3, "unit": "個" }],
@@ -293,7 +294,8 @@ Authorization: Bearer <token>
 }
 ```
 
-`is_private` / `is_draft` は真偽値、`ingredients[].amount` は数値（`"3"` のような数字の文字列も
+`recipe_status` は `public` / `private` / `public_draft` / `private_draft` のいずれか、
+`ingredients[].amount` は数値（`"3"` のような数字の文字列も
 受け付ける）。「少々」のように数量が無い材料は `amount` / `unit` を省略するか `null` にする。
 文字列の長さはDBの列に合わせて、`title` / `thumbnail` / `key_name` / `value` / 材料名が255文字、
 `unit` が50文字まで。`commit_message` は送るなら空文字以外。
@@ -323,8 +325,7 @@ Authorization: Bearer <token>
   "title": "肉じゃが",
   "description": "定番の肉じゃが",
   "owner": { "user_id": 1, "username": "tanaka" },
-  "is_private": false,
-  "is_draft": false,
+  "recipe_status": "public",
   "thumbnail": null,
   "permissions": { "admin": false, "push": false, "pull": true },
   "default_branch": "main",

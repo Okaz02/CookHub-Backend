@@ -10,8 +10,7 @@ const RECIPE_SELECT = `
            r.default_branch,
            r.thumbnail,
            r.stars_count,
-           r.is_private,
-           r.is_draft,
+           r.recipe_status,
            r.parent_recipe_id,
            r.fork_type,
            r.created_at,
@@ -48,8 +47,7 @@ const COMMIT_DIFF_RECIPE = `
            from_title, to_title,
            from_thumbnail, to_thumbnail,
            from_description, to_description,
-           from_is_private, to_is_private,
-           from_is_draft, to_is_draft
+           from_recipe_status, to_recipe_status
     FROM dolt_diff_recipes
     WHERE to_commit = ? AND (to_recipe_id = ? OR from_recipe_id = ?)`;
 
@@ -184,8 +182,7 @@ async function createRecipe(ownerId, recipe, parentRecipeId, commitMessage) {
                 description,
                 default_branch,
                 stars_count,
-                is_private,
-                is_draft,
+                recipe_status,
                 fork_type
             ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
             [
@@ -195,8 +192,7 @@ async function createRecipe(ownerId, recipe, parentRecipeId, commitMessage) {
                 recipe.thumbnail,
                 recipe.description,
                 recipe.default_branch,
-                Number(recipe.is_private),
-                Number(recipe.is_draft),
+                recipe.recipe_status,
                 recipe.fork_type
             ]
         );
@@ -241,7 +237,7 @@ async function createRecipe(ownerId, recipe, parentRecipeId, commitMessage) {
 async function listRecentRecipes(limit = 100) {
     const [rows] = await pool.query(
         `${RECIPE_SELECT}
-         WHERE r.is_private = FALSE
+         WHERE r.recipe_status = 'public'
          ORDER BY r.created_at DESC
          LIMIT ?`,
         [limit]
@@ -350,16 +346,14 @@ async function applyRecipeUpdate(connection, recipeId, recipe) {
          SET title = ?,
              description = ?,
              default_branch = ?,
-             is_private = ?,
-             is_draft = ?,
+             recipe_status = ?,
              thumbnail = ?
          WHERE recipe_id = ?`,
         [
             recipe.title,
             recipe.description,
             recipe.default_branch,
-            Number(recipe.is_private),
-            Number(recipe.is_draft),
+            recipe.recipe_status,
             recipe.thumbnail,
             recipeId
         ]

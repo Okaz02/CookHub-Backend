@@ -11,6 +11,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+app.use('/api/accounts', accountRoutes);
 app.use('/api/recipes', recipeRoutes);
 
 // スキーマ検証で弾かれた項目の一覧を取り出す。検証のエラーは、スキーマを直接呼ぶ側
