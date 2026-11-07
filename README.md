@@ -56,7 +56,7 @@ service層の関数名は、内部で権限チェックを行うものだけ `Ch
 | 列 | 値 |
 | --- | --- |
 | `recipes.fork_type` | `original`（フォークではない）/ `arrange`（アレンジ）/ `port`（移植） |
-| `recipe_pull_requests.status` | `open`（提案中）/ `merged`（取り込み済み） |
+| `recipe_pull_requests.status` | `open`（提案中）/ `merged`（取り込み済み）/ `closed`（見送り） |
 
 レシピの公開状態は `recipe_status` の `ENUM` で持つ。値は `public` / `private` /
 `public_draft` / `private_draft`。単独の真偽値は `is_active` のような `is_` で始まる
@@ -92,27 +92,38 @@ db層はこのスキーマを通った値しか受け取らないので、型の
 
 | テーブル               | 役割                                                             |
 | ---------------------- | ---------------------------------------------------------------- |
-| `accounts`             | アカウント本体。パスワードは bcrypt ハッシュのみ保存する         |
-| `access_tokens`        | アクセストークン。SHA-256 ハッシュのみ保存する                   |
+| `accounts`             | アカウント本体（ユーザー名・メールアドレス）                     |
+| `auth_tokens`          | アクセストークン。SHA-256 ハッシュと有効期限を保存する（履歴対象外） |
 | `recipes`              | レシピ本体（`title`, `recipe_status`, `parent_recipe_id` など） |
 | `recipe_environment`   | 必須環境（調理器具・人数など）の key/value                       |
 | `recipe_ingredients`   | 材料                                                             |
 | `recipe_steps`         | 手順                                                             |
 | `recipe_pull_requests` | プルリクエスト（`source_recipe_id` → `target_recipe_id`）        |
 | `recipe_issues`        | レシピへの Issue（`status` は `open` / `closed`）                |
+| `recipe_stars`         | いいね（`recipe_id` と `user_id` の組）。`stars_count` はここから数える |
+| `account_credentials`  | パスワードの bcrypt ハッシュ（履歴対象外）                       |
+| `rate_limit_hits`      | ログイン・登録の回数制限の記録（履歴対象外）                     |
+
+「履歴対象外」のテーブルは `dolt_ignore` に登録してあり、`DOLT_COMMIT('-A')` でもコミットされない。
+パスワードやトークンのハッシュを Dolt の履歴に永久に残さないための分離で、これらのテーブルは
+外部キーを張らず、アプリ側で `user_id` をそろえる。
 
 初期化スクリプトは外部キーの依存順に番号が振られており、上の表と同じ順で実行される。
 
 ```
 00_reset_tables.sql                   既存テーブルを依存の逆順で落とす
 01_init_accounts_table.sql            accounts
-02_init_access_tokens_table.sql       access_tokens
+02_init_auth_tokens_table.sql         auth_tokens
 03_init_recipes_table.sql             recipes
 04_init_recipe_environment.sql        recipe_environment
 05_init_recipe_ingredients.sql        recipe_ingredients
 06_init_recipe_steps.sql              recipe_steps
 07_init_recipe_pull_requests.sql      recipe_pull_requests
 08_init_recipe_issues.sql             recipe_issues
+09_init_recipe_stars.sql              recipe_stars
+10_init_account_credentials.sql       account_credentials
+11_init_rate_limit_hits.sql           rate_limit_hits
+12_init_dolt_ignore.sql               履歴対象外のテーブルを dolt_ignore に登録する
 99_dolt_commit.sql                    初期スキーマを Dolt にコミットする
 ```
 
@@ -127,6 +138,13 @@ db層はこのスキーマを通った値しか受け取らないので、型の
 | `04_fork_type_and_pr_status_to_enum.sql` | `recipes.fork_type` と `recipe_pull_requests.status` を番号から `ENUM` に変更 |
 | `05_recipe_status_to_enum.sql` | `recipes.is_private` と `recipes.is_draft` を `recipe_status` の `ENUM` に統合 |
 | `06_recreate_recipe_issues.sql` | `recipe_issues` を正しい定義で作り直す（行が無い前提） |
+| `07_pull_request_close_and_stars.sql` | プルリクエストの `closed`・`closed_at` を追加、`recipe_stars` を作成し `recipes.stars_count` を削除、`parent_recipe_id` に索引を追加 |
+| `08_move_secrets_out_of_history.sql` | パスワードハッシュを `account_credentials` に、トークンを `auth_tokens` に移して履歴対象外にする。既存のトークンはすべて無効になる |
+| `09_clear_invalid_image_urls.sql` | `http(s)` 以外の `thumbnail` / `image_url` を `NULL` にする |
+
+`08` を流しても、それ以前のコミットに残っているパスワードハッシュとトークンのハッシュは消えない。
+過去の履歴からも消したい場合は、DBを作り直して（`dolt/data` を消して初期化スクリプトから起動し直す）
+データを入れ直すこと。トークンは `08` で全件無効になるので、過去のハッシュが漏れても使えない。
 
 Dolt のイメージには `mysql` クライアントが入っていないので、コンテナ内の `dolt` CLI に
 標準入力から流し込む。
@@ -181,12 +199,18 @@ DOLT_PASSWORD=xxxxx          # COOKHUB_DB_PASSWORD と同じ値
 DOLT_DATABASE=cookhub
 DOLT_AUTO_COMMIT=true        # 書き込みのたびにDoltコミットを作る
 PORT=3001                    # 任意 (デフォルト: 3001)
+CORS_ORIGINS=https://cookhub.example.com   # Web版を使うなら必須。カンマ区切り。未指定なら全オリジン許可（Cookieは送られない）
+TRUST_PROXY=1                # 任意。リバースプロキシ配下なら段数を指定（ログイン回数制限が実際のIPで効くようにする）
+TOKEN_TTL_DAYS=30            # 任意。トークンの有効期限（日）
+COOKIE_SECURE=true           # 任意。http で開発するときだけ false
+COOKIE_SAMESITE=lax          # 任意。strict / lax / none。Web版とAPIが別サイトなら none
 ```
 
 ```bash
 cd api
 npm install
 npm start
+npm test                     # DBを使わない自動テスト（node:test）
 ```
 
 ## 認証
@@ -197,10 +221,29 @@ npm start
 Authorization: Bearer <token>
 ```
 
-アクセストークンは40文字の16進文字列で、有効期限は無い。DBには SHA-256 ハッシュしか
-保存しないため、発行時のレスポンス以外で値を確認することはできない。ログインのたびに
-新しいトークンが発行されるので、不要になった古いトークンは `access_tokens` テーブルから
-適宜削除すること。
+Web版は XSS でトークンを盗まれないよう、トークンを JavaScript から読めない Cookie で扱う。
+`register` / `login` に `X-CookHub-Client: web` ヘッダーを付けると、トークンはボディに入らず
+`cookhub_session`（`HttpOnly` / `Secure` / `SameSite`、`Path=/api`）として返る。
+Cookie で認証するリクエストには毎回 `X-CookHub-Client: web` が必要で、無ければ `403` になる
+（他サイトからはこのヘッダーを付けたリクエストを CORS の許可無しに送れないため、CSRF を防げる）。
+
+アクセストークンは40文字の16進文字列で、有効期限は `TOKEN_TTL_DAYS`（既定30日）。DBには
+SHA-256 ハッシュしか保存しないため、発行時のレスポンス以外で値を確認することはできない。
+ログインのたびに新しいトークンが発行され、`POST /api/accounts/logout` でそのトークンを
+無効にできる（Cookie も消える）。期限切れのトークンは次のログイン時に削除する。
+`last_used_at` は書き込みを減らすため1時間に1回だけ更新する。
+
+`register` / `login` には回数制限があり、超えると `429`（`Retry-After` ヘッダー付き）を返す。
+
+| エンドポイント | 制限 |
+| --- | --- |
+| `login` | 15分あたり、IPごと・ユーザー名ごとにそれぞれ10回 |
+| `register` | 15分あたり、IPごとに5回 |
+
+制限の記録は `rate_limit_hits` テーブルに持つので、APIを複数台で動かしても合算して数える。
+キーは SHA-256 でハッシュ化して保存し、期限切れの行は窓の長さごとに削除する。
+
+`500` のレスポンスの `error` は固定の文言で、内部のエラー内容はサーバーのログにだけ出す。
 
 エンドポイントは認証の要否で3種類に分かれる。
 
@@ -220,17 +263,26 @@ Authorization: Bearer <token>
 | POST | `/api/accounts/register` | 不要 | 必須 `username` `email` `password` | アカウント作成 + トークン発行 |
 | POST | `/api/accounts/login` | 不要 | 必須 `username` `password` | ログイン + トークン発行 |
 | GET | `/api/accounts/session` | 必須 | なし | ログイン状態の確認 |
+| POST | `/api/accounts/logout` | 必須 | なし | 使っているトークンを無効にする |
 | POST | `/api/recipes` | 必須 | 必須 `title` | レシピ作成 |
 | GET | `/api/recipes/mine` | 必須 | なし | 自分のレシピ一覧 |
 | GET | `/api/recipes/trend` | 任意 | なし | 公開レシピ一覧 |
+| GET | `/api/recipes/pull-requests/mine` | 必須 | なし | 自分が送ったプルリクエスト一覧 |
 | GET | `/api/recipes/:id` | 任意 | なし | レシピ詳細 |
 | GET | `/api/recipes/:id/commits` | 任意 | なし | 変更履歴の一覧 |
-| GET | `/api/recipes/:id/commits/:commitId` | 任意 | なし | 変更履歴1件の詳細 |
+| GET | `/api/recipes/:id/commits/:commitId` | 任意 | なし | 変更履歴1件の詳細（その時点のレシピを含む） |
+| POST | `/api/recipes/:id/commits/:commitId/restore` | 必須 | 任意 `commit_message` のみ | その時点の内容に戻す（オーナーのみ） |
+| GET | `/api/recipes/:id/family` | 任意 | なし | 派生ツリー（家系図） |
+| POST | `/api/recipes/:id/star` | 必須 | なし | いいね |
+| DELETE | `/api/recipes/:id/star` | 必須 | なし | いいねの取り消し |
 | POST | `/api/recipes/:id/fork` | 必須 | 任意（全項目） | レシピを複製（アレンジ / 移植） |
 | PATCH | `/api/recipes/:id` | 必須 | 任意（送った項目だけ更新） | レシピ編集（オーナーのみ） |
 | DELETE | `/api/recipes/:id` | 必須 | なし | レシピ削除（オーナーのみ） |
+| GET | `/api/recipes/:id/pull-requests` | 任意 | なし | そのレシピに届いたプルリクエスト一覧 |
 | POST | `/api/recipes/:id/pull-request/create` | 必須 | 必須 `title` | プルリクエスト作成（`:id` = 自分のフォーク） |
+| GET | `/api/recipes/:id/pull-request` | 任意 | なし | プルリクエスト詳細と Before/After（`:id` = **プルリクエストのID**） |
 | POST | `/api/recipes/:id/pull-request/merge` | 必須 | 任意 `commit_message` のみ | プルリクエストのマージ（`:id` = **プルリクエストのID**） |
+| POST | `/api/recipes/:id/pull-request/close` | 必須 | 任意 `commit_message` のみ | プルリクエストを見送る（`:id` = **プルリクエストのID**） |
 | POST | `/api/recipes/:id/issue/create` | 必須 | 必須 `title` | Issue 作成 |
 
 `Content-Type: application/json` を付けてボディを送る場合、JSONとして壊れていると
@@ -249,7 +301,8 @@ Authorization: Bearer <token>
 { "username": "string", "email": "string", "password": "string" }
 ```
 
-`username` は255文字まで、`email` はメールアドレスの形式で255文字まで、`password` は72文字まで
+`username` は255文字までで `<` `>` と制御文字は使えない（Dolt コミットの author に入るため）。
+`email` はメールアドレスの形式で255文字まで、`password` は8〜72文字
 （bcrypt が73文字目以降を見ないため、黙って切り捨てずに弾く）。
 
 - `201`: 作成されたアカウント情報 + `token`
@@ -296,8 +349,10 @@ Authorization: Bearer <token>
 `recipe_status` は `public` / `private` / `public_draft` / `private_draft` のいずれか、
 `ingredients[].amount` は数値（`"3"` のような数字の文字列も
 受け付ける）。「少々」のように数量が無い材料は `amount` / `unit` を省略するか `null` にする。
+`thumbnail` / `steps[].image_url` は `http://` か `https://` で始まるURLのみ。
 文字列の長さはDBの列に合わせて、`title` / `thumbnail` / `key_name` / `value` / 材料名が255文字、
 `unit` が50文字まで。`commit_message` は送るなら空文字以外。
+`fork_type` は送っても無視され、常に `original` で作られる（`arrange` / `port` はフォークでのみ付く）。
 
 - `201`: `{ "ok": true, "commit": "<コミットハッシュ>", "data": {...} }`
 - `400`: `title` が無い / 型・長さがスキーマに合わない
@@ -316,7 +371,7 @@ Authorization: Bearer <token>
 `permissions.admin` が `true` になる（返る件数は変わらない）。
 
 - `200`: `{ "ok": true, "data": [...] }` — 公開レシピを作成日時の新しい順に最大100件取得し、
-  `stars_count` の降順に並べ替えたもの
+  `stars_count`（いいねの数）の降順に並べ替えたもの
 
 ```json
 {
@@ -337,7 +392,8 @@ Authorization: Bearer <token>
 }
 ```
 
-キー名はDBの列名と同じで、`is_fork`（`parent_recipe_id` があるか）だけが計算した値。
+キー名はDBの列名と同じで、`is_fork`（`parent_recipe_id` があるか）と
+`stars_count`（`recipe_stars` の行数）だけが計算した値。
 「tanaka/肉じゃが」のような表示名を出したい場合は `owner.username` と `title` から
 クライアント側で組み立てる。
 
@@ -349,7 +405,7 @@ Authorization: Bearer <token>
 必要なもの: 公開レシピなら**なし**。非公開レシピはオーナーのトークンが要る（無いと `403`）。
 
 - `200`: レシピ詳細。一覧の形に加えて `environment` / `ingredients` / `steps` と、
-  直近のコミット `latest_commit` が入る
+  直近のコミット `latest_commit`、閲覧者がいいね済みかどうかの `starred` が入る
 - `400`: `:id` が数値でない
 - `403`: 非公開レシピで、自分のものではない
 - `404`: レシピが無い
@@ -379,7 +435,9 @@ Authorization: Bearer <token>
 
 - `200`: コミット1件の詳細。`changes` にそのコミットで変わった内容が
   `info` / `environment` / `ingredients` / `steps` ごとに入り、各行は `diff_type`
-  （`added` / `modified` / `removed`）と変更前 `from_*` / 変更後 `to_*` の値を持つ
+  （`added` / `modified` / `removed`）と変更前 `from_*` / 変更後 `to_*` の値を持つ。
+  `snapshot` にはそのコミット時点のレシピ（`title` / `description` / `thumbnail` /
+  `recipe_status` / `environment` / `ingredients` / `steps`）が入る（その時点でレシピが無ければ `null`）
 - `403`: 非公開レシピで、自分のものではない
 - `404`: レシピまたはコミットが無い
 
