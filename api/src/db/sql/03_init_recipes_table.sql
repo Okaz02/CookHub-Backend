@@ -12,7 +12,6 @@ CREATE TABLE IF NOT EXISTS recipes (
     thumbnail        VARCHAR(255) NULL,
     description      TEXT         NULL,
     default_branch   VARCHAR(255) NOT NULL DEFAULT 'main',
-    stars_count      INT          NOT NULL DEFAULT 0,
     recipe_status    ENUM('public', 'private', 'public_draft', 'private_draft') NOT NULL DEFAULT 'public',
     -- original = フォークではない / arrange = アレンジ / port = 移植（別の環境・人数に作り直したもの）
     fork_type        ENUM('original', 'arrange', 'port') NOT NULL DEFAULT 'original',
@@ -21,6 +20,7 @@ CREATE TABLE IF NOT EXISTS recipes (
     PRIMARY KEY (recipe_id),
     UNIQUE KEY uq_recipes_owner_title (owner_id, title),
     KEY idx_recipes_created_at (created_at),
+    KEY idx_recipes_parent_recipe_id (parent_recipe_id),
     CONSTRAINT fk_recipes_owner
         FOREIGN KEY (owner_id) REFERENCES accounts (user_id) ON DELETE CASCADE
 );
