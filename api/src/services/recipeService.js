@@ -404,25 +404,83 @@ async function createCheckedPullRequest(userId, recipeId, payload = {}) {
         recipeId, source.parent_recipe_id, userId, input, message
     );
 
-    return { ok: true, commit, data: pullRequest };
+    return { ok: true, commit, data: toPullRequest(pullRequest, userId) };
+}
+
+async function listCheckedPullRequests(recipeId, viewerId = null) {
+    await requireViewableRecipe(recipeId, viewerId);
+    const rows = await recipeDb.listPullRequestsByTargetRecipeId(recipeId);
+    return { ok: true, data: rows.map((row) => toPullRequest(row, viewerId)) };
+}
+
+async function listPullRequestsByCurrentUser(userId) {
+    const rows = await recipeDb.listPullRequestsByUserId(userId);
+    return { ok: true, data: rows.map((row) => toPullRequest(row, userId)) };
+}
+
+async function getCheckedPullRequest(prId, viewerId = null) {
+    const pullRequest = await requirePullRequest(prId);
+    const [target, source] = await Promise.all([
+        recipeDb.getRecipeById(pullRequest.target_recipe_id),
+        recipeDb.getRecipeById(pullRequest.source_recipe_id)
+    ]);
+
+    const isTargetOwner = viewerId != null && target.user_id === viewerId;
+    const isProposer = viewerId != null && pullRequest.user_id === viewerId;
+    const canView = isTargetOwner || isProposer
+        || (toPermissions(target, viewerId).pull && toPermissions(source, viewerId).pull);
+    if (!canView) {
+        throw httpError(403, 'このプルリクエストを閲覧する権限がありません');
+    }
+
+    const isOpen = pullRequest.status === 'open';
+    return {
+        ok: true,
+        data: {
+            ...toPullRequest(pullRequest, viewerId),
+            before: toRecipeContent(target),
+            after: toRecipeContent(source),
+            after_digest: toMergeDigest(source),
+            permissions: {
+                merge: isOpen && isTargetOwner,
+                close: isOpen && (isTargetOwner || isProposer)
+            }
+        }
+    };
 }
 
 async function mergeCheckedPullRequest(userId, prId, payload = {}) {
-    const { commit_message } = mergeSchema.assert(payload);
+    const { commit_message, expected_digest } = mergeSchema.assert(payload ?? {});
 
-    const target = await recipeDb.getPullRequestById(prId);
-    if (!target) {
-        const err = new Error('プルリクエストが見つかりません');
-        err.status = 404;
-        throw err;
+    const pullRequest = await requirePullRequest(prId);
+    const target = await requireAdministrableRecipe(pullRequest.target_recipe_id, userId, 'マージ');
+    if (pullRequest.status !== 'open') {
+        throw httpError(409, 'このプルリクエストは既に対応済みです');
     }
 
-    await requireAdministrableRecipe(target.target_recipe_id, userId, 'マージ');
+    const source = await recipeDb.getRecipeById(pullRequest.source_recipe_id);
+    if (expected_digest && expected_digest !== toMergeDigest(source)) {
+        throw httpError(409, '提案の内容が更新されています。最新の内容を確認してから取り込んでください');
+    }
 
-    const message = commit_message || `プルリクエストをマージ: ${target.title}`;
-    const { commit, pullRequest } = await recipeDb.mergePullRequest(prId, userId, message);
+    const message = commit_message || `プルリクエストをマージ: ${pullRequest.title}`;
+    const { commit, pullRequest: merged } = await recipeDb.mergePullRequest(prId, source, target, userId, message);
 
-    return { ok: true, commit, data: pullRequest };
+    return { ok: true, commit, data: toPullRequest(merged, userId) };
+}
+
+async function closeCheckedPullRequest(userId, prId, payload = {}) {
+    const { commit_message } = commitMessageSchema.assert(payload ?? {});
+
+    const pullRequest = await requirePullRequest(prId);
+    if (pullRequest.target_owner_id !== userId && pullRequest.user_id !== userId) {
+        throw httpError(403, 'このプルリクエストを見送る権限がありません');
+    }
+
+    const message = commit_message || `プルリクエストを見送り: ${pullRequest.title}`;
+    const { commit, pullRequest: closed } = await recipeDb.closePullRequest(prId, userId, message);
+
+    return { ok: true, commit, data: toPullRequest(closed, userId) };
 }
 
 module.exports = {
@@ -433,9 +491,16 @@ module.exports = {
     getCheckedRecipeDetail,
     getCheckedRecipeCommits,
     getCheckedRecipeCommit,
+    getCheckedRecipeFamily,
     updateCheckedRecipe,
+    restoreCheckedRecipe,
     deleteCheckedRecipe,
+    setCheckedRecipeStar,
     createCheckedIssue,
     createCheckedPullRequest,
-    mergeCheckedPullRequest
+    listCheckedPullRequests,
+    listPullRequestsByCurrentUser,
+    getCheckedPullRequest,
+    mergeCheckedPullRequest,
+    closeCheckedPullRequest
 };
