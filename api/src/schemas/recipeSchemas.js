@@ -21,6 +21,14 @@ const optionalText = (max) => {
     return type('string | null').pipe(trimToNull).to(`${length} | null`).default(null);
 };
 
+const optionalUrl = (max) => {
+    return type('string | null')
+        .pipe(trimToNull)
+        .to(`string <= ${max} | null`)
+        .narrow((value, ctx) => value === null || /^https?:\/\//i.test(value) || ctx.mustBe('an http(s) URL'))
+        .default(null);
+};
+
 const toNumber = (value, ctx) => {
     if (typeof value !== 'string') {
         return value;
@@ -84,7 +92,7 @@ const ingredientSchema = type({
 const stepSchema = type({
     id: optionalId(),
     body: requiredText(),
-    image_url: optionalText(255)
+    image_url: optionalUrl(255)
 });
 
 // parent_recipe_id は service 層が :id から決める
@@ -92,7 +100,7 @@ const recipeSchema = type({
     title: requiredText(255),
     description: optionalText(),
     default_branch: branchName(),
-    thumbnail: optionalText(255),
+    thumbnail: optionalUrl(255),
     recipe_status: oneOf(['public', 'private', 'public_draft', 'private_draft']).default('public'),
     fork_type: oneOf(['original', 'arrange', 'port'], 'original').default('original'), // port = 別の環境・人数に作り直したもの
     environment: rows(environmentSchema),
@@ -115,11 +123,15 @@ const issueSchema = type({
     commit_message: optionalText(255)
 });
 
-const mergeSchema = type({
+const commitMessageSchema = type({
     commit_message: optionalText(255)
 });
 
-// :id は /pull-request/merge だけプルリクエスト ID
+const mergeSchema = commitMessageSchema.merge({
+    expected_digest: type(/^[0-9a-f]{64}$/).or('null').default(null)
+});
+
+// :id は /pull-request 系だけプルリクエスト ID
 const recipeParamsSchema = type({
     id: requiredId()
 });
@@ -133,6 +145,7 @@ module.exports = {
     forkTypeSchema,
     pullRequestSchema,
     issueSchema,
+    commitMessageSchema,
     mergeSchema,
     recipeParamsSchema,
     commitParamsSchema
