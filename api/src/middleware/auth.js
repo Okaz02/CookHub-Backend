@@ -1,51 +1,58 @@
 const { ArkErrors } = require('arktype');
 const { getAccountBySession } = require('../services/accountService');
 const { accessTokenSchema } = require('../schemas/accountSchemas');
+const { httpError } = require('../utils/httpError');
+const { readSessionCookie, isWebClient } = require('../utils/sessionCookie');
 
-function extractToken(req) {
-    const [, token] = (req.headers.authorization || '').split(' ');
-    return token;
+function extractCredential(req) {
+    const [scheme, token] = (req.headers.authorization || '').split(' ');
+    if (scheme === 'Bearer' && token) {
+        return { token, viaCookie: false };
+    }
+
+    const cookieToken = readSessionCookie(req);
+    return cookieToken ? { token: cookieToken, viaCookie: true } : null;
 }
 
-async function requireAuth(req, res, next) {
-    const token = accessTokenSchema(extractToken(req));
+async function authenticate(req, credential, next) {
+    const token = accessTokenSchema(credential.token);
     if (token instanceof ArkErrors) {
-        const err = new Error('認証が必要です');
-        err.status = 401;
-        next(err);
+        next(httpError(401, 'トークンが無効です'));
+        return;
+    }
+    if (credential.viaCookie && !isWebClient(req)) {
+        next(httpError(403, '不正なリクエストです'));
         return;
     }
 
     try {
         req.account = await getAccountBySession(token);
+        req.accessToken = token;
         next();
     } catch (error) {
         next(error);
     }
 }
 
+async function requireAuth(req, res, next) {
+    const credential = extractCredential(req);
+    if (!credential) {
+        next(httpError(401, '認証が必要です'));
+        return;
+    }
+
+    await authenticate(req, credential, next);
+}
+
 async function optionalAuth(req, res, next) {
-    const rawToken = extractToken(req);
-    if (!rawToken) {
+    const credential = extractCredential(req);
+    if (!credential) {
         req.account = null;
         next();
         return;
     }
 
-    const token = accessTokenSchema(rawToken);
-    if (token instanceof ArkErrors) {
-        const err = new Error('トークンが無効です');
-        err.status = 401;
-        next(err);
-        return;
-    }
-
-    try {
-        req.account = await getAccountBySession(token);
-        next();
-    } catch (error) {
-        next(error);
-    }
+    await authenticate(req, credential, next);
 }
 
 module.exports = { requireAuth, optionalAuth };
