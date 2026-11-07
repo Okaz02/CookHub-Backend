@@ -240,7 +240,15 @@ async function getCheckedRecipeCommit(recipeId, commitId, viewerId = null) {
         throw httpError(404, '変更履歴が見つかりません');
     }
 
-    return { ok: true, data: { ...toCommit(row), changes: row.changes } };
+    const snapshot = await recipeDb.getRecipeSnapshot(recipeId, commitId);
+    return {
+        ok: true,
+        data: {
+            ...toCommit(row),
+            changes: row.changes,
+            snapshot: snapshot ? toRecipeContent(snapshot) : null
+        }
+    };
 }
 
 function toRecipeInput(row) {
@@ -254,20 +262,57 @@ function toRecipeInput(row) {
     };
 }
 
-async function updateCheckedRecipe(userId, recipeId, payload = {}) {
-    const existing = await requireAdministrableRecipe(recipeId, userId, '編集');
-
-    const input = payload ?? {};
+async function applyCheckedRecipeUpdate(userId, recipeId, existing, input, defaultMessage) {
     const recipe = recipeSchema.assert({
         ...toRecipeInput(existing),
         ...input,
-        title: input.title ?? existing.title
+        title: input.title ?? existing.title,
+        fork_type: existing.fork_type
     });
-    const message = recipe.commit_message || `レシピ更新: ${recipe.title}`;
-    const { commit } = await recipeDb.updateRecipeById(recipeId, userId, recipe, message);
+    const message = recipe.commit_message || defaultMessage(recipe);
+
+    let commit;
+    try {
+        ({ commit } = await recipeDb.updateRecipeById(recipeId, userId, recipe, message));
+    } catch (error) {
+        throw toDuplicateNameError(error);
+    }
 
     const updated = await recipeDb.getRecipeById(recipeId);
     return { ok: true, commit, data: toRecipe(updated, userId) };
+}
+
+async function updateCheckedRecipe(userId, recipeId, payload = {}) {
+    const existing = await requireAdministrableRecipe(recipeId, userId, '編集');
+    return applyCheckedRecipeUpdate(
+        userId, recipeId, existing, payload ?? {},
+        (recipe) => `レシピ更新: ${recipe.title}`
+    );
+}
+
+async function restoreCheckedRecipe(userId, recipeId, commitId, payload = {}) {
+    const existing = await requireAdministrableRecipe(recipeId, userId, '復元');
+    const { commit_message } = commitMessageSchema.assert(payload ?? {});
+
+    const commitRow = await recipeDb.getCommitByRecipeId(recipeId, commitId);
+    const snapshot = commitRow ? await recipeDb.getRecipeSnapshot(recipeId, commitId) : null;
+    if (!snapshot) {
+        throw httpError(404, 'その時点のレシピが見つかりません');
+    }
+
+    return applyCheckedRecipeUpdate(
+        userId, recipeId, existing,
+        {
+            title: snapshot.title,
+            description: snapshot.description,
+            thumbnail: snapshot.thumbnail,
+            environment: snapshot.environment,
+            ingredients: snapshot.ingredients,
+            steps: snapshot.steps,
+            commit_message
+        },
+        (recipe) => `以前の作り方に戻す: ${recipe.title}（${commitId.slice(0, 7)}）`
+    );
 }
 
 async function deleteCheckedRecipe(userId, recipeId) {
