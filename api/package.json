@@ -4,7 +4,8 @@
     "node": ">=22.12"
   },
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test \"test/**/*.test.js\""
   },
   "dependencies": {
     "arktype": "^2.2.3",
