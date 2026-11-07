@@ -388,9 +388,56 @@ function withoutRowIds(rows) {
     return rows.map((row) => ({ ...row, id: null }));
 }
 
+const PULL_REQUEST_SELECT = `
+    SELECT p.*,
+           a.username,
+           s.title AS source_title,
+           s.owner_id AS source_owner_id,
+           s.recipe_status AS source_recipe_status,
+           t.title AS target_title,
+           t.owner_id AS target_owner_id,
+           t.recipe_status AS target_recipe_status
+    FROM recipe_pull_requests p
+    JOIN accounts a ON a.user_id = p.user_id
+    JOIN recipes s ON s.recipe_id = p.source_recipe_id
+    JOIN recipes t ON t.recipe_id = p.target_recipe_id`;
+
 async function getPullRequestById(prId) {
-    const [rows] = await pool.query('SELECT * FROM recipe_pull_requests WHERE id = ?', [prId]);
+    const [rows] = await pool.query(`${PULL_REQUEST_SELECT} WHERE p.id = ?`, [prId]);
     return rows[0] || null;
+}
+
+async function listPullRequestsByTargetRecipeId(recipeId) {
+    const [rows] = await pool.query(
+        `${PULL_REQUEST_SELECT}
+         WHERE p.target_recipe_id = ?
+         ORDER BY p.created_at DESC`,
+        [recipeId]
+    );
+    return rows;
+}
+
+async function listPullRequestsByUserId(userId) {
+    const [rows] = await pool.query(
+        `${PULL_REQUEST_SELECT}
+         WHERE p.user_id = ?
+         ORDER BY p.created_at DESC`,
+        [userId]
+    );
+    return rows;
+}
+
+async function finishPullRequest(connection, prId, status) {
+    const timestampColumn = status === 'merged' ? 'merged_at' : 'closed_at';
+    const [result] = await connection.execute(
+        `UPDATE recipe_pull_requests
+         SET status = ?, ${timestampColumn} = NOW()
+         WHERE id = ? AND status = 'open'`,
+        [status, prId]
+    );
+    if (result.affectedRows === 0) {
+        throw httpError(409, 'このプルリクエストは既に対応済みです');
+    }
 }
 
 async function createPullRequest(sourceRecipeId, targetRecipeId, userId, pullRequest, commitMessage) {
@@ -408,20 +455,8 @@ async function createPullRequest(sourceRecipeId, targetRecipeId, userId, pullReq
     return { commit, pullRequest: created };
 }
 
-// merged_commit_hash は --skip-empty で null になり得るので、マージ済みかは merged_at で見る
-async function mergePullRequest(prId, userId, commitMessage) {
-    const pullRequest = await getPullRequestById(prId);
-    if (!pullRequest) {
-        return null;
-    }
-    if (pullRequest.merged_at) {
-        const err = new Error('このプルリクエストは既にマージ済みです');
-        err.status = 409;
-        throw err;
-    }
-
-    const source = await getRecipeById(pullRequest.source_recipe_id);
-    const target = await getRecipeById(pullRequest.target_recipe_id);
+// merged_commit_hash は --skip-empty で null になり得るので、マージ済みかは status で見る
+async function mergePullRequest(prId, source, target, userId, commitMessage) {
     const mergedContent = {
         ...target,
         description: source.description,
@@ -430,23 +465,31 @@ async function mergePullRequest(prId, userId, commitMessage) {
         steps: withoutRowIds(source.steps)
     };
 
-    const connection = await pool.getConnection();
-    try {
-        await connection.beginTransaction();
-        await applyRecipeUpdate(connection, pullRequest.target_recipe_id, mergedContent);
-        await connection.commit();
-    } catch (error) {
-        await connection.rollback();
-        throw error;
-    } finally {
-        connection.release();
-    }
+    await withTransaction(async (connection) => {
+        await finishPullRequest(connection, prId, 'merged');
+        await applyRecipeUpdate(connection, target.recipe_id, mergedContent);
+    });
 
     const commit = await commitDolt(commitMessage, userId);
+    if (commit) {
+        await pool.execute('UPDATE recipe_pull_requests SET merged_commit_hash = ? WHERE id = ?', [commit, prId]);
+        await commitDolt(`プルリクエストのマージコミットを記録: #${prId}`, userId);
+    }
 
-    await pool.execute(
-        'UPDATE recipe_pull_requests SET status = ?, merged_commit_hash = ?, merged_at = NOW() WHERE id = ?',
-        ['merged', commit, pullRequest.id]
+    return { commit, pullRequest: await getPullRequestById(prId) };
+}
+
+async function closePullRequest(prId, userId, commitMessage) {
+    await withTransaction((connection) => finishPullRequest(connection, prId, 'closed'));
+    const commit = await commitDolt(commitMessage, userId);
+
+    return { commit, pullRequest: await getPullRequestById(prId) };
+}
+
+async function isRecipeStarred(recipeId, userId) {
+    const [rows] = await pool.query(
+        'SELECT 1 FROM recipe_stars WHERE recipe_id = ? AND user_id = ?',
+        [recipeId, userId]
     );
     await commitDolt(`プルリクエストをマージ済みとして記録: #${pullRequest.id}`, userId);
 
