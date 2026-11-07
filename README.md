@@ -439,7 +439,48 @@ SHA-256 ハッシュしか保存しないため、発行時のレスポンス以
   `snapshot` にはそのコミット時点のレシピ（`title` / `description` / `thumbnail` /
   `recipe_status` / `environment` / `ingredients` / `steps`）が入る（その時点でレシピが無ければ `null`）
 - `403`: 非公開レシピで、自分のものではない
-- `404`: レシピまたはコミットが無い
+- `404`: レシピまたはコミットが無い（そのレシピに触れていないコミットも `404`）
+
+### POST /api/recipes/:id/commits/:commitId/restore
+
+必要なもの: **オーナーのトークン**。ボディは**任意**で、読まれるのは `commit_message` だけ。
+
+そのコミット時点の `title` / `description` / `thumbnail` / `environment` / `ingredients` / `steps` で
+レシピを上書きする。公開状態（`recipe_status`）は今のまま変えない。戻した操作も新しいコミットとして残る。
+
+- `200`: 戻したあとのレシピ
+- `403`: 自分のレシピではない
+- `404`: レシピ・コミットが無い、またはその時点にレシピが存在しない
+- `409`: その時点のタイトルと同じ名前のレシピを既に持っている
+
+### GET /api/recipes/:id/family
+
+必要なもの: `GET /api/recipes/:id` と同じ。
+
+`:id` から `parent_recipe_id` を根までさかのぼり、根から下の派生をすべて集めて返す。
+
+```json
+{
+  "ok": true,
+  "data": {
+    "current_id": 3,
+    "nodes": [
+      { "id": 1, "title": "肉じゃが", "...": "一覧と同じ形", "environment": [{ "key_name": "人数", "value": "2人分" }], "tree_parent_id": null }
+    ]
+  }
+}
+```
+
+一度に返すのは最大2000件で、超えた場合は `truncated` が `true` になる。
+閲覧者が見られないレシピ（他人の非公開・下書き）は `nodes` に入らない。`tree_parent_id` は
+見えている中で一番近い祖先の ID で、間の非公開レシピは飛ばしてつなぐ。
+
+### POST /api/recipes/:id/star / DELETE /api/recipes/:id/star
+
+必要なもの: **トークンのみ**。閲覧できるレシピならだれでもいいねできる。
+
+- `200`: `{ "ok": true, "commit": "...", "data": { "starred": true, "stars_count": 3 } }`
+- `403` / `404`: `GET /api/recipes/:id` と同じ
 
 ### POST /api/recipes/:id/fork
 
@@ -484,6 +525,7 @@ SHA-256 ハッシュしか保存しないため、発行時のレスポンス以
 - `400`: 型・長さがスキーマに合わない / `:id` が数値でない
 - `403`: 自分のレシピではない
 - `404`: レシピが無い
+- `409`: 同じ名前のレシピを既に持っている
 
 ### DELETE /api/recipes/:id
 
@@ -528,10 +570,17 @@ SHA-256 ハッシュしか保存しないため、発行時のレスポンス以
     "merged_commit_hash": null,
     "created_at": "2026-09-17T10:41:58.000Z",
     "updated_at": "2026-09-17T10:41:58.000Z",
-    "merged_at": null
+    "merged_at": null,
+    "closed_at": null,
+    "proposer": { "user_id": 5, "username": "c" },
+    "source_title": "肉じゃが",
+    "target_title": "肉じゃが"
   }
 }
 ```
+
+プルリクエストを返すAPIはすべてこの形。`source_title` / `target_title` は、閲覧者が
+そのレシピを見られない場合（他人の非公開・下書きで、取り込み先のオーナーや提案者でもない）は `null` になる。
 
 - `400`: `title` が無い / フォーク元が無いレシピを指定した / `:id` が数値でない
 - `401`: トークンが未指定または無効
@@ -540,15 +589,18 @@ SHA-256 ハッシュしか保存しないため、発行時のレスポンス以
 
 ### POST /api/recipes/:id/pull-request/merge
 
-`:id` は**プルリクエストのID**（レシピIDではない）。`pull-request/create` のレスポンスの
-`data.id` を使う。PRの一覧取得APIはまだ無いので、この値は作成時に控えておく必要がある。
+`:id` は**プルリクエストのID**（レシピIDではない）。`GET /api/recipes/:id/pull-requests` や
+`pull-request/create` のレスポンスの `id` を使う。
 
 マージできるのは**取り込み先（フォーク元）のオーナー**だけ。提案したユーザー自身は
 マージできない（`403`）。
 
 必要なもの: **取り込み先レシピのオーナーのトークンのみ**。ボディは**任意**で、
-読まれるのは `commit_message` だけ。省略時は
-`プルリクエストをマージ: <PRのtitle>` になる。ボディごと省略しても `200` で通る。
+読まれるのは `commit_message`（省略時は `プルリクエストをマージ: <PRのtitle>`）と `expected_digest`。
+
+`expected_digest` には `GET /api/recipes/:id/pull-request` の `after_digest` を渡す。確認してから
+マージするまでの間に提案元の内容が変わっていると `409` になり、確認していない内容が取り込まれるのを防ぐ。
+内容の取り込みと `status` の更新は1つのトランザクションで行う。
 
 提案元レシピの**説明・必須環境・材料・手順**が取り込み先に丸ごと書き写される
 （取り込み先の既存の材料・手順は置き換えられる）。タイトル・公開設定・サムネイルなど
@@ -560,7 +612,41 @@ SHA-256 ハッシュしか保存しないため、発行時のレスポンス以
 - `401`: トークンが未指定または無効
 - `403`: 取り込み先のオーナーではない（提案者自身がマージしようとした場合を含む）
 - `404`: プルリクエストが無い
-- `409`: 既にマージ済み
+- `409`: 既にマージ済み・見送り済み
+
+### GET /api/recipes/:id/pull-requests
+
+`:id` は**取り込み先のレシピID**。そのレシピに届いたプルリクエストを新しい順に返す。
+
+必要なもの: `GET /api/recipes/:id` と同じ。
+
+### GET /api/recipes/pull-requests/mine
+
+必要なもの: **トークンのみ**。自分が作ったプルリクエストを新しい順に返す。
+
+### GET /api/recipes/:id/pull-request
+
+`:id` は**プルリクエストのID**。プルリクエストの形に加えて、取り込み先の今の内容 `before`、
+提案元の今の内容 `after`（どちらも `title` / `description` / `thumbnail` / `recipe_status` /
+`environment` / `ingredients` / `steps`）、マージ時に照合する `after_digest`、閲覧者ができる操作 `permissions`
+（`merge`: 取り込み先のオーナーで提案中、`close`: 取り込み先のオーナーか提案者で提案中）が入る。
+
+必要なもの: 取り込み先のオーナーか提案者のトークン。それ以外は両方のレシピが閲覧できるときだけ見られる。
+
+- `403`: 閲覧できない
+- `404`: プルリクエストが無い
+
+### POST /api/recipes/:id/pull-request/close
+
+`:id` は**プルリクエストのID**。取り込まずに見送る。`status` が `"closed"` になり `closed_at` が埋まる。
+
+必要なもの: **取り込み先のオーナーか提案者のトークン**。ボディは**任意**で、読まれるのは
+`commit_message` だけ（省略時は `プルリクエストを見送り: <PRのtitle>`）。
+
+- `200`: 見送ったプルリクエスト
+- `403`: 取り込み先のオーナーでも提案者でもない
+- `404`: プルリクエストが無い
+- `409`: 既にマージ済み・見送り済み
 
 ### POST /api/recipes/:id/issue/create
 
