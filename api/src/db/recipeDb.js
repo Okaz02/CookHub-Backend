@@ -1,5 +1,7 @@
 const { commitDolt } = require('../clients/doltClient');
+const { httpError } = require('../utils/httpError');
 const { pool } = require('./pool');
+const { withTransaction } = require('./transaction');
 
 const RECIPE_SELECT = `
     SELECT r.recipe_id,
@@ -7,7 +9,7 @@ const RECIPE_SELECT = `
            r.description,
            r.default_branch,
            r.thumbnail,
-           r.stars_count,
+           (SELECT COUNT(*) FROM recipe_stars st WHERE st.recipe_id = r.recipe_id) AS stars_count,
            r.recipe_status,
            r.parent_recipe_id,
            r.fork_type,
@@ -19,22 +21,30 @@ const RECIPE_SELECT = `
     JOIN accounts a ON a.user_id = r.owner_id`;
 
 // 子テーブルだけの変更も履歴に出すため、4つの差分テーブルからハッシュを集める
+const RECIPE_COMMIT_HASHES = `
+    SELECT to_commit FROM dolt_diff_recipes                  WHERE to_recipe_id = ? OR from_recipe_id = ?
+    UNION SELECT to_commit FROM dolt_diff_recipe_environment WHERE to_recipe_id = ? OR from_recipe_id = ?
+    UNION SELECT to_commit FROM dolt_diff_recipe_ingredients WHERE to_recipe_id = ? OR from_recipe_id = ?
+    UNION SELECT to_commit FROM dolt_diff_recipe_steps       WHERE to_recipe_id = ? OR from_recipe_id = ?`;
+
+const COMMIT_COLUMNS = 'l.commit_hash, l.message, l.committer, l.email, l.date';
+
 const COMMIT_LIST_SELECT = `
-    SELECT l.commit_hash, l.message, l.committer, l.email, l.date
+    SELECT ${COMMIT_COLUMNS}
     FROM dolt_log l
-    WHERE l.commit_hash IN (
-        SELECT to_commit FROM dolt_diff_recipes                  WHERE to_recipe_id = ? OR from_recipe_id = ?
-        UNION SELECT to_commit FROM dolt_diff_recipe_environment WHERE to_recipe_id = ? OR from_recipe_id = ?
-        UNION SELECT to_commit FROM dolt_diff_recipe_ingredients WHERE to_recipe_id = ? OR from_recipe_id = ?
-        UNION SELECT to_commit FROM dolt_diff_recipe_steps       WHERE to_recipe_id = ? OR from_recipe_id = ?
-    )
+    WHERE l.commit_hash IN (${RECIPE_COMMIT_HASHES})
     ORDER BY l.date DESC
     LIMIT ?`;
 
 const COMMIT_SELECT = `
-    SELECT l.commit_hash, l.message, l.committer, l.email, l.date
+    SELECT ${COMMIT_COLUMNS}
     FROM dolt_log l
-    WHERE l.commit_hash = ?`;
+    WHERE l.commit_hash = ?
+      AND l.commit_hash IN (${RECIPE_COMMIT_HASHES})`;
+
+function recipeCommitParams(recipeId) {
+    return Array(8).fill(recipeId);
+}
 
 const COMMIT_DIFF_RECIPE = `
     SELECT diff_type,
@@ -161,10 +171,7 @@ async function syncAllChildRows(connection, recipeId, recipe) {
 }
 
 async function createRecipe(ownerId, recipe, parentRecipeId, commitMessage) {
-    const connection = await pool.getConnection();
-    try {
-        await connection.beginTransaction();
-
+    const recipeId = await withTransaction(async (connection) => {
         const [result] = await connection.execute(
             `INSERT INTO recipes (
                 owner_id,
@@ -173,10 +180,9 @@ async function createRecipe(ownerId, recipe, parentRecipeId, commitMessage) {
                 thumbnail,
                 description,
                 default_branch,
-                stars_count,
                 recipe_status,
                 fork_type
-            ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 ownerId,
                 parentRecipeId,
@@ -189,22 +195,12 @@ async function createRecipe(ownerId, recipe, parentRecipeId, commitMessage) {
             ]
         );
 
-        const recipeId = result.insertId;
+        await syncAllChildRows(connection, result.insertId, recipe);
+        return result.insertId;
+    });
 
-        await syncAllChildRows(connection, recipeId, recipe);
-
-        await connection.commit();
-
-        const [rows] = await pool.query(`${RECIPE_SELECT} WHERE r.recipe_id = ?`, [recipeId]);
-        const commit = await commitDolt(commitMessage, ownerId);
-
-        return { commit, recipe: rows[0] || null };
-    } catch (error) {
-        await connection.rollback();
-        throw error;
-    } finally {
-        connection.release();
-    }
+    const commit = await commitDolt(commitMessage, ownerId);
+    return { commit, recipe: await getRecipeRowById(recipeId) };
 }
 
 async function listRecentRecipes(limit = 100) {
@@ -229,18 +225,12 @@ async function listRecipesByOwnerId(ownerId) {
 }
 
 async function listCommitsByRecipeId(recipeId, limit = 100) {
-    const [rows] = await pool.query(COMMIT_LIST_SELECT, [
-        recipeId, recipeId,
-        recipeId, recipeId,
-        recipeId, recipeId,
-        recipeId, recipeId,
-        limit
-    ]);
+    const [rows] = await pool.query(COMMIT_LIST_SELECT, [...recipeCommitParams(recipeId), limit]);
     return rows;
 }
 
 async function getCommitByRecipeId(recipeId, commitHash) {
-    const [logs] = await pool.query(COMMIT_SELECT, [commitHash]);
+    const [logs] = await pool.query(COMMIT_SELECT, [commitHash, ...recipeCommitParams(recipeId)]);
     if (!logs[0]) {
         return null;
     }
@@ -256,22 +246,25 @@ async function getCommitByRecipeId(recipeId, commitHash) {
     return { ...logs[0], changes: { info, environment, ingredients, steps } };
 }
 
-async function getRecipeById(recipeId) {
-    const [rows] = await pool.query(`${RECIPE_SELECT} WHERE r.recipe_id = ?`, [recipeId]);
+function asOfClause(commitHash) {
+    return commitHash ? ' AS OF ?' : '';
+}
 
-    const row = rows[0];
-    if (!row) {
-        return null;
-    }
+function asOfParams(commitHash, params) {
+    return commitHash ? [commitHash, ...params] : params;
+}
 
-    const [[environment], [ingredients], [steps], commits] = await Promise.all([
+async function getRecipeChildren(recipeId, commitHash = null) {
+    const asOf = asOfClause(commitHash);
+    const params = asOfParams(commitHash, [recipeId]);
+    const [[environment], [ingredients], [steps]] = await Promise.all([
         pool.query(
-            'SELECT id, key_name, value FROM recipe_environment WHERE recipe_id = ? ORDER BY sort_order',
-            [recipeId]
+            `SELECT id, key_name, value FROM recipe_environment${asOf} WHERE recipe_id = ? ORDER BY sort_order`,
+            params
         ),
         pool.query(
-            'SELECT id, name, amount, unit FROM recipe_ingredients WHERE recipe_id = ? ORDER BY sort_order',
-            [recipeId]
+            `SELECT id, name, amount, unit FROM recipe_ingredients${asOf} WHERE recipe_id = ? ORDER BY sort_order`,
+            params
         ),
         pool.query(
             'SELECT id, body, image_url FROM recipe_steps WHERE recipe_id = ? ORDER BY sort_order',
