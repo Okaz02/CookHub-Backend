@@ -4,13 +4,18 @@ const {
     createAccount,
     getAccountCredentialsByUsername,
     insertAccessToken,
+    deleteAccessToken,
+    deleteExpiredAccessTokens,
     getAccountByTokenHash,
     touchAccessToken
 } = require('../db/accountDb');
 const { commitDolt } = require('../clients/doltClient');
 const { registerSchema, loginSchema } = require('../schemas/accountSchemas');
+const { httpError, isDuplicateEntry } = require('../utils/httpError');
+const config = require('../config');
 
 const BCRYPT_ROUNDS = 10;
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync(crypto.randomBytes(16).toString('hex'), BCRYPT_ROUNDS);
 
 function generateAccessToken() {
     return crypto.randomBytes(20).toString('hex');
@@ -22,7 +27,8 @@ function hashAccessToken(token) {
 
 async function issueAccessToken(account) {
     const token = generateAccessToken();
-    await insertAccessToken(account.user_id, `cookhub-${Date.now()}`, hashAccessToken(token));
+    await deleteExpiredAccessTokens(account.user_id);
+    await insertAccessToken(account.user_id, `cookhub-${Date.now()}`, hashAccessToken(token), config.tokenTtlDays);
     return token;
 }
 
@@ -35,12 +41,9 @@ async function registerAccount(payload) {
     try {
         account = await createAccount(username, email, passwordHash);
     } catch (error) {
-        if (error.code === 'ER_DUP_ENTRY' || error.errno === 1062) {
-            const err = new Error('username または email は既に使われています');
-            err.status = 409;
-            throw err;
+        if (isDuplicateEntry(error)) {
+            throw httpError(409, 'username または email は既に使われています');
         }
-        error.status = error.status || 500;
         throw error;
     }
 
@@ -54,14 +57,10 @@ async function loginAccount(payload) {
     const { username, password } = loginSchema.assert(payload);
 
     const credentials = await getAccountCredentialsByUsername(username);
-    const passwordMatched = credentials
-        ? await bcrypt.compare(password, credentials.password_hash)
-        : false;
+    const passwordMatched = await bcrypt.compare(password, credentials?.password_hash ?? DUMMY_PASSWORD_HASH);
 
     if (!credentials || !passwordMatched || !credentials.is_active) {
-        const err = new Error('ユーザー名またはパスワードが正しくありません');
-        err.status = 401;
-        throw err;
+        throw httpError(401, 'ユーザー名またはパスワードが正しくありません');
     }
 
     const { password_hash, ...account } = credentials;
@@ -75,17 +74,21 @@ async function getAccountBySession(token) {
     const account = await getAccountByTokenHash(tokenHash);
 
     if (!account || !account.is_active) {
-        const err = new Error('トークンが無効です');
-        err.status = 401;
-        throw err;
+        throw httpError(401, 'トークンが無効です');
     }
 
     await touchAccessToken(tokenHash);
     return account;
 }
 
+async function logoutAccount(token) {
+    await deleteAccessToken(hashAccessToken(token));
+    return { ok: true };
+}
+
 module.exports = {
     registerAccount,
     loginAccount,
-    getAccountBySession
+    getAccountBySession,
+    logoutAccount
 };
