@@ -1,11 +1,16 @@
+const crypto = require('crypto');
 const recipeDb = require('../db/recipeDb');
 const {
     recipeSchema,
     forkTypeSchema,
     pullRequestSchema,
     issueSchema,
+    commitMessageSchema,
     mergeSchema
 } = require('../schemas/recipeSchemas');
+const { httpError, isDuplicateEntry } = require('../utils/httpError');
+
+const MAX_FAMILY_NODES = 2000;
 
 // push / pull は git から借りた名前で、push = 書き換え可、pull = 閲覧可
 function toPermissions(row, viewerId) {
@@ -69,17 +74,67 @@ function toCommit(row) {
     };
 }
 
+function toRecipeContent(row) {
+    return {
+        title: row.title,
+        description: row.description,
+        thumbnail: row.thumbnail,
+        recipe_status: row.recipe_status,
+        environment: row.environment,
+        ingredients: row.ingredients,
+        steps: row.steps
+    };
+}
+
+function canViewByStatus(ownerId, recipeStatus, viewerId) {
+    return (viewerId != null && ownerId === viewerId) || recipeStatus === 'public';
+}
+
+function toPullRequest(row, viewerId = null) {
+    const canViewSource = canViewByStatus(row.source_owner_id, row.source_recipe_status, viewerId)
+        || row.target_owner_id === viewerId;
+    const canViewTarget = canViewByStatus(row.target_owner_id, row.target_recipe_status, viewerId)
+        || row.user_id === viewerId;
+
+    return {
+        id: row.id,
+        target_recipe_id: row.target_recipe_id,
+        source_recipe_id: row.source_recipe_id,
+        user_id: row.user_id,
+        title: row.title,
+        content: row.content,
+        status: row.status,
+        merged_commit_hash: row.merged_commit_hash,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        merged_at: row.merged_at,
+        closed_at: row.closed_at,
+        proposer: {
+            user_id: row.user_id,
+            username: row.username
+        },
+        source_title: canViewSource ? row.source_title : null,
+        target_title: canViewTarget ? row.target_title : null
+    };
+}
+
+function toMergeDigest(recipe) {
+    const content = {
+        description: recipe.description,
+        environment: recipe.environment.map(({ key_name, value }) => [key_name, value]),
+        ingredients: recipe.ingredients.map(({ name, amount, unit }) => [name, amount, unit]),
+        steps: recipe.steps.map(({ body, image_url }) => [body, image_url])
+    };
+    return crypto.createHash('sha256').update(JSON.stringify(content)).digest('hex');
+}
+
 async function requireRecipePermission(recipeId, viewerId, permission, action) {
     const row = await recipeDb.getRecipeById(recipeId);
     if (!row) {
-        const err = new Error('レシピが見つかりません');
-        err.status = 404;
-        throw err;
+        throw httpError(404, 'レシピが見つかりません');
     }
     if (!toPermissions(row, viewerId)[permission]) {
-        const err = new Error(`このレシピを${action}する権限がありません`);
-        err.status = 403;
-        throw err;
+        throw httpError(403, `このレシピを${action}する権限がありません`);
     }
     return row;
 }
@@ -92,13 +147,18 @@ function requireAdministrableRecipe(recipeId, userId, action) {
     return requireRecipePermission(recipeId, userId, 'admin', action);
 }
 
-function toDuplicateNameError(error) {
-    if (error.code === 'ER_DUP_ENTRY' || error.errno === 1062) {
-        const err = new Error('同じ名前のレシピを既に持っています。別の名前を付けてください');
-        err.status = 409;
-        return err;
+async function requirePullRequest(prId) {
+    const pullRequest = await recipeDb.getPullRequestById(prId);
+    if (!pullRequest) {
+        throw httpError(404, 'プルリクエストが見つかりません');
     }
-    return error;
+    return pullRequest;
+}
+
+function toDuplicateNameError(error) {
+    return isDuplicateEntry(error)
+        ? httpError(409, '同じ名前のレシピを既に持っています。別の名前を付けてください')
+        : error;
 }
 
 async function saveRecipe(userId, recipe, parentRecipeId, message) {
@@ -111,7 +171,7 @@ async function saveRecipe(userId, recipe, parentRecipeId, message) {
 }
 
 async function createRecipe(ownerId, payload) {
-    const recipe = recipeSchema.assert(payload);
+    const recipe = recipeSchema.assert({ ...payload, fork_type: 'original' });
     const message = recipe.commit_message || `レシピ作成: ${recipe.title}`;
 
     return saveRecipe(ownerId, recipe, null, message);
@@ -129,12 +189,13 @@ async function createCheckedIssue(userId, recipeId, payload = {}) {
 
 async function forkCheckedRecipe(userId, recipeId, payload = {}) {
     const source = await requireViewableRecipe(recipeId, userId);
-    const forkType = forkTypeSchema.assert(payload.fork_type);
+    const input = payload ?? {};
+    const forkType = forkTypeSchema.assert(input.fork_type);
 
     const recipe = recipeSchema.assert({
         ...source,
-        ...payload,
-        title: payload.title ?? source.title,
+        ...input,
+        title: input.title ?? source.title,
         fork_type: forkType
     });
 
@@ -161,7 +222,8 @@ async function searchRecipesByCurrentUser(userId) {
 
 async function getCheckedRecipeDetail(recipeId, viewerId = null) {
     const row = await requireViewableRecipe(recipeId, viewerId);
-    return { ok: true, data: toRecipe(row, viewerId) };
+    const starred = viewerId != null && await recipeDb.isRecipeStarred(recipeId, viewerId);
+    return { ok: true, data: { ...toRecipe(row, viewerId), starred } };
 }
 
 async function getCheckedRecipeCommits(recipeId, viewerId = null) {
@@ -175,9 +237,7 @@ async function getCheckedRecipeCommit(recipeId, commitId, viewerId = null) {
 
     const row = await recipeDb.getCommitByRecipeId(recipeId, commitId);
     if (!row) {
-        const err = new Error('変更履歴が見つかりません');
-        err.status = 404;
-        throw err;
+        throw httpError(404, '変更履歴が見つかりません');
     }
 
     return { ok: true, data: { ...toCommit(row), changes: row.changes } };
