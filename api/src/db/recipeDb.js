@@ -267,37 +267,88 @@ async function getRecipeChildren(recipeId, commitHash = null) {
             params
         ),
         pool.query(
-            'SELECT id, body, image_url FROM recipe_steps WHERE recipe_id = ? ORDER BY sort_order',
-            [recipeId]
-        ),
+            `SELECT id, body, image_url FROM recipe_steps${asOf} WHERE recipe_id = ? ORDER BY sort_order`,
+            params
+        )
+    ]);
+
+    return { environment, ingredients, steps };
+}
+
+async function getRecipeRowById(recipeId) {
+    const [rows] = await pool.query(`${RECIPE_SELECT} WHERE r.recipe_id = ?`, [recipeId]);
+    return rows[0] || null;
+}
+
+async function getRecipeById(recipeId) {
+    const row = await getRecipeRowById(recipeId);
+    if (!row) {
+        return null;
+    }
+
+    const [children, commits] = await Promise.all([
+        getRecipeChildren(recipeId),
         listCommitsByRecipeId(recipeId, 1)
     ]);
 
-    return { ...row, environment, ingredients, steps, latest_commit: commits[0] || null };
+    return { ...row, ...children, latest_commit: commits[0] || null };
+}
+
+async function getRecipeSnapshot(recipeId, commitHash) {
+    const [rows] = await pool.query(
+        'SELECT title, description, thumbnail, recipe_status FROM recipes AS OF ? WHERE recipe_id = ?',
+        [commitHash, recipeId]
+    );
+    if (!rows[0]) {
+        return null;
+    }
+
+    const children = await getRecipeChildren(recipeId, commitHash);
+    return { ...rows[0], ...children };
+}
+
+async function listEnvironmentByRecipeIds(recipeIds) {
+    if (recipeIds.length === 0) {
+        return [];
+    }
+
+    const [rows] = await pool.query(
+        `SELECT recipe_id, key_name, value
+         FROM recipe_environment
+         WHERE recipe_id IN (?)
+         ORDER BY recipe_id, sort_order`,
+        [recipeIds]
+    );
+    return rows;
+}
+
+async function listRecipesByParentIds(parentIds) {
+    if (parentIds.length === 0) {
+        return [];
+    }
+
+    const [rows] = await pool.query(
+        `${RECIPE_SELECT}
+         WHERE r.parent_recipe_id IN (?)
+         ORDER BY r.created_at`,
+        [parentIds]
+    );
+    return rows;
 }
 
 async function deleteRecipeById(recipeId, userId, commitMessage) {
-    const connection = await pool.getConnection();
-    try {
-        await connection.beginTransaction();
-
+    await withTransaction(async (connection) => {
         await connection.execute('DELETE FROM recipe_environment WHERE recipe_id = ?', [recipeId]);
         await connection.execute('DELETE FROM recipe_ingredients WHERE recipe_id = ?', [recipeId]);
         await connection.execute('DELETE FROM recipe_steps WHERE recipe_id = ?', [recipeId]);
         await connection.execute('DELETE FROM recipe_issues WHERE recipe_id = ?', [recipeId]);
+        await connection.execute('DELETE FROM recipe_stars WHERE recipe_id = ?', [recipeId]);
         await connection.execute(
             'DELETE FROM recipe_pull_requests WHERE target_recipe_id = ? OR source_recipe_id = ?',
             [recipeId, recipeId]
         );
         await connection.execute('DELETE FROM recipes WHERE recipe_id = ?', [recipeId]);
-
-        await connection.commit();
-    } catch (error) {
-        await connection.rollback();
-        throw error;
-    } finally {
-        connection.release();
-    }
+    });
 
     const commit = await commitDolt(commitMessage, userId);
     return { commit };
@@ -326,17 +377,7 @@ async function applyRecipeUpdate(connection, recipeId, recipe) {
 }
 
 async function updateRecipeById(recipeId, userId, recipe, commitMessage) {
-    const connection = await pool.getConnection();
-    try {
-        await connection.beginTransaction();
-        await applyRecipeUpdate(connection, recipeId, recipe);
-        await connection.commit();
-    } catch (error) {
-        await connection.rollback();
-        throw error;
-    } finally {
-        connection.release();
-    }
+    await withTransaction((connection) => applyRecipeUpdate(connection, recipeId, recipe));
 
     const commit = await commitDolt(commitMessage, userId);
     return { commit };
