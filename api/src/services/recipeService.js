@@ -321,18 +321,84 @@ async function deleteCheckedRecipe(userId, recipeId) {
     return { ok: true, commit, data: { id: existing.recipe_id } };
 }
 
+async function getCheckedRecipeFamily(recipeId, viewerId = null) {
+    const { environment, ingredients, steps, latest_commit, ...current } = await requireViewableRecipe(recipeId, viewerId);
+
+    const rowsById = new Map([[current.recipe_id, current]]);
+    let root = current;
+    while (root.parent_recipe_id != null && !rowsById.has(root.parent_recipe_id)) {
+        const parent = await recipeDb.getRecipeRowById(root.parent_recipe_id);
+        if (!parent) {
+            break;
+        }
+        rowsById.set(parent.recipe_id, parent);
+        root = parent;
+    }
+
+    let frontier = [root.recipe_id];
+    const expanded = new Set();
+    let truncated = false;
+    while (frontier.length > 0) {
+        if (rowsById.size >= MAX_FAMILY_NODES) {
+            truncated = true;
+            break;
+        }
+        frontier.forEach((id) => expanded.add(id));
+        const children = await recipeDb.listRecipesByParentIds(frontier);
+        children.forEach((child) => rowsById.set(child.recipe_id, child));
+        frontier = children
+            .map((child) => child.recipe_id)
+            .filter((id) => !expanded.has(id));
+    }
+
+    const isVisible = (row) => toPermissions(row, viewerId).pull;
+    const nearestVisibleAncestorId = (row) => {
+        let parentId = row.parent_recipe_id;
+        const visited = new Set();
+        while (parentId != null && rowsById.has(parentId) && !visited.has(parentId)) {
+            visited.add(parentId);
+            const parent = rowsById.get(parentId);
+            if (isVisible(parent)) {
+                return parentId;
+            }
+            parentId = parent.parent_recipe_id;
+        }
+        return null;
+    };
+
+    const visibleRows = [...rowsById.values()].filter(isVisible);
+    const environments = await recipeDb.listEnvironmentByRecipeIds(visibleRows.map((row) => row.recipe_id));
+    const environmentByRecipeId = new Map(visibleRows.map((row) => [row.recipe_id, []]));
+    environments.forEach(({ recipe_id, key_name, value }) => {
+        environmentByRecipeId.get(recipe_id).push({ key_name, value });
+    });
+
+    const nodes = visibleRows.map((row) => ({
+        ...toRecipe(row, viewerId),
+        environment: environmentByRecipeId.get(row.recipe_id),
+        tree_parent_id: nearestVisibleAncestorId(row)
+    }));
+
+    return { ok: true, data: { current_id: current.recipe_id, nodes, truncated } };
+}
+
+async function setCheckedRecipeStar(userId, recipeId, starred) {
+    const recipe = await requireViewableRecipe(recipeId, userId);
+    const message = `${starred ? 'いいね' : 'いいねを取り消し'}: ${recipe.username}/${recipe.title}`;
+    const { commit, ...data } = await recipeDb.setRecipeStar(recipeId, userId, starred, message);
+    return { ok: true, commit, data };
+}
+
 async function createCheckedPullRequest(userId, recipeId, payload = {}) {
     const source = await requireAdministrableRecipe(recipeId, userId, '提案');
 
     if (!source.parent_recipe_id) {
-        const err = new Error('フォーク元が無いレシピはプルリクエストを作成できません');
-        err.status = 400;
-        throw err;
+        throw httpError(400, 'フォーク元が無いレシピはプルリクエストを作成できません');
     }
 
     await requireViewableRecipe(source.parent_recipe_id, userId);
 
-    const input = pullRequestSchema.assert(payload);
+    const input = pullRequestSchema.assert(payload ?? {});
     const message = input.commit_message || `プルリクエスト作成: ${input.title}`;
     const { commit, pullRequest } = await recipeDb.createPullRequest(
         recipeId, source.parent_recipe_id, userId, input, message
