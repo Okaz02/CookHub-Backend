@@ -491,9 +491,32 @@ async function isRecipeStarred(recipeId, userId) {
         'SELECT 1 FROM recipe_stars WHERE recipe_id = ? AND user_id = ?',
         [recipeId, userId]
     );
-    await commitDolt(`プルリクエストをマージ済みとして記録: #${pullRequest.id}`, userId);
+    return rows.length > 0;
+}
 
-    return { commit, pullRequest: await getPullRequestById(pullRequest.id) };
+async function countRecipeStars(recipeId) {
+    const [rows] = await pool.query(
+        'SELECT COUNT(*) AS stars_count FROM recipe_stars WHERE recipe_id = ?',
+        [recipeId]
+    );
+    return rows[0].stars_count;
+}
+
+async function setRecipeStar(recipeId, userId, starred, commitMessage) {
+    if (starred) {
+        await pool.execute(
+            'INSERT IGNORE INTO recipe_stars (recipe_id, user_id) VALUES (?, ?)',
+            [recipeId, userId]
+        );
+    } else {
+        await pool.execute(
+            'DELETE FROM recipe_stars WHERE recipe_id = ? AND user_id = ?',
+            [recipeId, userId]
+        );
+    }
+
+    const commit = await commitDolt(commitMessage, userId);
+    return { commit, starred, stars_count: await countRecipeStars(recipeId) };
 }
 
 async function getIssueById(issueId) {
@@ -520,10 +543,19 @@ module.exports = {
     listRecentRecipes,
     listRecipesByOwnerId,
     getRecipeById,
+    getRecipeRowById,
+    getRecipeSnapshot,
+    listRecipesByParentIds,
+    listEnvironmentByRecipeIds,
     updateRecipeById,
     deleteRecipeById,
     getPullRequestById,
+    listPullRequestsByTargetRecipeId,
+    listPullRequestsByUserId,
     createPullRequest,
     mergePullRequest,
+    closePullRequest,
+    isRecipeStarred,
+    setRecipeStar,
     createIssue
 };
