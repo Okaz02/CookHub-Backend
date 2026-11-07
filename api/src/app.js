@@ -6,12 +6,17 @@ const express = require('express');
 const cors = require('cors');
 const { ArkErrors } = require('arktype');
 
+const config = require('./config');
 const accountRoutes = require('./routes/accountRoutes');
 const recipeRoutes = require('./routes/recipeRoutes');
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+if (config.trustProxy !== null) {
+    app.set('trust proxy', config.trustProxy);
+}
+app.disable('x-powered-by');
+app.use(cors(config.corsOrigins ? { origin: config.corsOrigins, credentials: true } : undefined));
+app.use(express.json({ limit: '200kb' }));
 
 app.use('/api/accounts', accountRoutes);
 app.use('/api/recipes', recipeRoutes);
@@ -30,8 +35,10 @@ app.use((error, req, res, next) => {
     }
 
     const status = error.status || 500;
-    if (status === 500) {
+    if (status >= 500) {
         console.error(error);
+        res.status(status).json({ error: 'サーバーでエラーが発生しました' });
+        return;
     }
     res.status(status).json({ error: error.message });
 });

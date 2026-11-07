@@ -34,12 +34,6 @@ async function commitDolt(message, userId) {
     }
 }
 
-async function getActiveBranch() {
-    const [rows] = await pool.query('SELECT active_branch() AS branch');
-    return rows[0] ? rows[0].branch : null;
-}
-
 module.exports = {
-    commitDolt,
-    getActiveBranch
+    commitDolt
 };

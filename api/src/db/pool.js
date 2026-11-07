@@ -8,12 +8,10 @@ const pool = mysql.createPool({
     database: process.env.DOLT_DATABASE,
     waitForConnections: true,
     connectionLimit: 10,
-    // Dolt は UTC で時刻を持つ
     timezone: 'Z',
     decimalNumbers: true,
-    // Dolt は TINYINT(1) の表示幅を返さないので、真偽値の列は is_ という名前で見分ける
-    typeCast: (field, next) => {
-        if (field.type === 'TINY' && /(^|_)is_/.test(field.name)) {
+    typeCast(field, next) {
+        if (field.type === 'TINY' && field.length === 1) {
             const value = field.string();
             return value === null ? null : value === '1';
         }
